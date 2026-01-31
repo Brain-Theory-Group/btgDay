@@ -317,14 +317,15 @@ app.post('/api/evaluations', authMiddleware, async (c) => {
 
 // ==================== 세미나 API ====================
 
-// 세미나 목록 조회
+// 세미나 목록 조회 (개인 + 공유 세미나)
 app.get('/api/seminars', authMiddleware, async (c) => {
   const userId = c.get('userId')
   
   const seminars = await c.env.DB.prepare(
-    `SELECT * FROM seminars 
-     WHERE user_id = ? 
-     ORDER BY event_date DESC, start_time DESC`
+    `SELECT s.*, u.name as creator_name FROM seminars s
+     LEFT JOIN users u ON s.user_id = u.id
+     WHERE s.user_id = ? OR s.is_shared = 1
+     ORDER BY s.event_date DESC, s.start_time DESC`
   ).bind(userId).all()
   
   return c.json(seminars.results)
@@ -333,12 +334,12 @@ app.get('/api/seminars', authMiddleware, async (c) => {
 // 세미나 추가
 app.post('/api/seminars', authMiddleware, async (c) => {
   const userId = c.get('userId')
-  const { title, description, event_date, start_time, end_time, location } = await c.req.json()
+  const { title, description, event_date, start_time, end_time, location, is_shared } = await c.req.json()
   
   const result = await c.env.DB.prepare(
-    `INSERT INTO seminars (user_id, title, description, event_date, start_time, end_time, location) 
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
-  ).bind(userId, title, description, event_date, start_time, end_time, location).run()
+    `INSERT INTO seminars (user_id, title, description, event_date, start_time, end_time, location, is_shared) 
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(userId, title, description, event_date, start_time, end_time, location, is_shared ? 1 : 0).run()
   
   return c.json({ 
     success: true, 
@@ -350,13 +351,13 @@ app.post('/api/seminars', authMiddleware, async (c) => {
 app.put('/api/seminars/:id', authMiddleware, async (c) => {
   const userId = c.get('userId')
   const seminarId = c.req.param('id')
-  const { title, description, event_date, start_time, end_time, location } = await c.req.json()
+  const { title, description, event_date, start_time, end_time, location, is_shared } = await c.req.json()
   
   await c.env.DB.prepare(
     `UPDATE seminars 
-     SET title = ?, description = ?, event_date = ?, start_time = ?, end_time = ?, location = ?
+     SET title = ?, description = ?, event_date = ?, start_time = ?, end_time = ?, location = ?, is_shared = ?
      WHERE id = ? AND user_id = ?`
-  ).bind(title, description, event_date, start_time, end_time, location, seminarId, userId).run()
+  ).bind(title, description, event_date, start_time, end_time, location, is_shared ? 1 : 0, seminarId, userId).run()
   
   return c.json({ success: true })
 })
@@ -458,12 +459,12 @@ app.get('/api/calendar', authMiddleware, async (c) => {
      WHERE user_id = ? AND start_date <= ? AND end_date >= ?`
   ).bind(userId, endDate, startDate).all()
   
-  // 세미나
+  // 세미나 (개인 + 공유)
   const seminars = await c.env.DB.prepare(
     `SELECT 'seminar' as type, 'seminar' as subtype, event_date as date,
             title, start_time, end_time, location, description
      FROM seminars 
-     WHERE user_id = ? AND event_date >= ? AND event_date <= ?`
+     WHERE (user_id = ? OR is_shared = 1) AND event_date >= ? AND event_date <= ?`
   ).bind(userId, startDate, endDate).all()
   
   // 출장
@@ -479,6 +480,226 @@ app.get('/api/calendar', authMiddleware, async (c) => {
     vacations: vacations.results,
     seminars: seminars.results,
     business_trips: trips.results
+  })
+})
+
+// ==================== 코멘트 API ====================
+
+// 코멘트 목록 조회 (연구원이 받은 코멘트)
+app.get('/api/comments', authMiddleware, async (c) => {
+  const userId = c.get('userId')
+  
+  const comments = await c.env.DB.prepare(
+    `SELECT c.*, u.name as admin_name 
+     FROM comments c
+     LEFT JOIN users u ON c.admin_id = u.id
+     WHERE c.user_id = ? 
+     ORDER BY c.created_at DESC`
+  ).bind(userId).all()
+  
+  return c.json(comments.results)
+})
+
+// 코멘트 추가 (관리자만 가능)
+app.post('/api/comments', authMiddleware, async (c) => {
+  const adminId = c.get('userId')
+  const { user_id, comment_text, related_type, related_id } = await c.req.json()
+  
+  // 관리자 권한 확인
+  const admin = await c.env.DB.prepare(
+    'SELECT role FROM users WHERE id = ?'
+  ).bind(adminId).first()
+  
+  if (admin?.role !== 'admin') {
+    return c.json({ error: '관리자만 코멘트를 작성할 수 있습니다.' }, 403)
+  }
+  
+  const result = await c.env.DB.prepare(
+    `INSERT INTO comments (user_id, admin_id, comment_text, related_type, related_id) 
+     VALUES (?, ?, ?, ?, ?)`
+  ).bind(user_id, adminId, comment_text, related_type || null, related_id || null).run()
+  
+  return c.json({ 
+    success: true, 
+    id: result.meta.last_row_id 
+  })
+})
+
+// 코멘트 삭제 (관리자만 가능)
+app.delete('/api/comments/:id', authMiddleware, async (c) => {
+  const adminId = c.get('userId')
+  const commentId = c.req.param('id')
+  
+  // 관리자 권한 확인
+  const admin = await c.env.DB.prepare(
+    'SELECT role FROM users WHERE id = ?'
+  ).bind(adminId).first()
+  
+  if (admin?.role !== 'admin') {
+    return c.json({ error: '관리자만 코멘트를 삭제할 수 있습니다.' }, 403)
+  }
+  
+  await c.env.DB.prepare(
+    'DELETE FROM comments WHERE id = ? AND admin_id = ?'
+  ).bind(commentId, adminId).run()
+  
+  return c.json({ success: true })
+})
+
+// ==================== 관리자 API ====================
+
+// 관리자 대시보드 - 모든 연구원 목록
+app.get('/api/admin/researchers', authMiddleware, async (c) => {
+  const adminId = c.get('userId')
+  
+  // 관리자 권한 확인
+  const admin = await c.env.DB.prepare(
+    'SELECT role FROM users WHERE id = ?'
+  ).bind(adminId).first()
+  
+  if (admin?.role !== 'admin') {
+    return c.json({ error: '관리자 권한이 필요합니다.' }, 403)
+  }
+  
+  const researchers = await c.env.DB.prepare(
+    `SELECT id, email, name, created_at FROM users WHERE role = 'researcher' ORDER BY name`
+  ).all()
+  
+  return c.json(researchers.results)
+})
+
+// 관리자 대시보드 - 특정 연구원의 상세 정보
+app.get('/api/admin/researcher/:id', authMiddleware, async (c) => {
+  const adminId = c.get('userId')
+  const researcherId = c.req.param('id')
+  
+  // 관리자 권한 확인
+  const admin = await c.env.DB.prepare(
+    'SELECT role FROM users WHERE id = ?'
+  ).bind(adminId).first()
+  
+  if (admin?.role !== 'admin') {
+    return c.json({ error: '관리자 권한이 필요합니다.' }, 403)
+  }
+  
+  // 연구원 기본 정보
+  const researcher = await c.env.DB.prepare(
+    'SELECT id, email, name, created_at FROM users WHERE id = ?'
+  ).bind(researcherId).first()
+  
+  // 연구노트 수
+  const notesCount = await c.env.DB.prepare(
+    'SELECT COUNT(*) as count FROM research_notes WHERE user_id = ?'
+  ).bind(researcherId).first()
+  
+  // 최근 7일 시간 기록
+  const recentTime = await c.env.DB.prepare(
+    `SELECT record_type, SUM(duration_minutes) as total 
+     FROM time_records 
+     WHERE user_id = ? AND record_date >= date('now', '-7 days')
+     GROUP BY record_type`
+  ).bind(researcherId).all()
+  
+  // 휴가 신청
+  const vacations = await c.env.DB.prepare(
+    'SELECT * FROM vacation_requests WHERE user_id = ? ORDER BY created_at DESC LIMIT 5'
+  ).bind(researcherId).all()
+  
+  // 최근 평가
+  const evaluations = await c.env.DB.prepare(
+    'SELECT * FROM self_evaluations WHERE user_id = ? ORDER BY evaluation_date DESC LIMIT 5'
+  ).bind(researcherId).all()
+  
+  return c.json({
+    researcher,
+    notes_count: notesCount?.count || 0,
+    recent_time: recentTime.results,
+    vacations: vacations.results,
+    evaluations: evaluations.results
+  })
+})
+
+// ==================== 통계 API ====================
+
+// 주간 통계
+app.get('/api/stats/weekly', authMiddleware, async (c) => {
+  const userId = c.get('userId')
+  
+  // 최근 7일 시간 기록
+  const weeklyStats = await c.env.DB.prepare(
+    `SELECT 
+       record_date,
+       record_type,
+       SUM(duration_minutes) as total_minutes
+     FROM time_records 
+     WHERE user_id = ? AND record_date >= date('now', '-7 days')
+     GROUP BY record_date, record_type
+     ORDER BY record_date DESC`
+  ).bind(userId).all()
+  
+  return c.json(weeklyStats.results)
+})
+
+// 월간 통계
+app.get('/api/stats/monthly', authMiddleware, async (c) => {
+  const userId = c.get('userId')
+  
+  // 최근 30일 시간 기록
+  const monthlyStats = await c.env.DB.prepare(
+    `SELECT 
+       record_date,
+       record_type,
+       SUM(duration_minutes) as total_minutes
+     FROM time_records 
+     WHERE user_id = ? AND record_date >= date('now', '-30 days')
+     GROUP BY record_date, record_type
+     ORDER BY record_date DESC`
+  ).bind(userId).all()
+  
+  return c.json(monthlyStats.results)
+})
+
+// 전체 통계 요약
+app.get('/api/stats/summary', authMiddleware, async (c) => {
+  const userId = c.get('userId')
+  
+  // 이번 주 (최근 7일)
+  const thisWeek = await c.env.DB.prepare(
+    `SELECT 
+       record_type,
+       SUM(duration_minutes) as total_minutes,
+       COUNT(*) as count
+     FROM time_records 
+     WHERE user_id = ? AND record_date >= date('now', '-7 days')
+     GROUP BY record_type`
+  ).bind(userId).all()
+  
+  // 지난 주 (8-14일 전)
+  const lastWeek = await c.env.DB.prepare(
+    `SELECT 
+       record_type,
+       SUM(duration_minutes) as total_minutes
+     FROM time_records 
+     WHERE user_id = ? 
+       AND record_date >= date('now', '-14 days')
+       AND record_date < date('now', '-7 days')
+     GROUP BY record_type`
+  ).bind(userId).all()
+  
+  // 이번 달 (최근 30일)
+  const thisMonth = await c.env.DB.prepare(
+    `SELECT 
+       record_type,
+       SUM(duration_minutes) as total_minutes
+     FROM time_records 
+     WHERE user_id = ? AND record_date >= date('now', '-30 days')
+     GROUP BY record_type`
+  ).bind(userId).all()
+  
+  return c.json({
+    this_week: thisWeek.results,
+    last_week: lastWeek.results,
+    this_month: thisMonth.results
   })
 })
 

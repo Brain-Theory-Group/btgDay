@@ -2,7 +2,7 @@
 INSERT OR IGNORE INTO users (email, name, password, role) VALUES 
   ('researcher1@example.com', '김연구', 'password123', 'researcher'),
   ('researcher2@example.com', '이과학', 'password123', 'researcher'),
-  ('admin@example.com', '관리자', 'password123', 'admin');
+  ('admin@example.com', '박지도교수', 'password123', 'admin');
 
 -- 샘플 연구노트
 INSERT OR IGNORE INTO research_notes (user_id, title, content) VALUES 
@@ -24,13 +24,19 @@ INSERT OR IGNORE INTO vacation_requests (user_id, start_date, end_date, reason, 
 INSERT OR IGNORE INTO self_evaluations (user_id, evaluation_date, productivity_score, quality_score, collaboration_score, notes) VALUES 
   (1, date('now'), 4, 5, 4, '오늘은 생산적인 하루였습니다. 실험이 잘 진행되었습니다.');
 
--- 샘플 세미나
-INSERT OR IGNORE INTO seminars (user_id, title, description, event_date, start_time, end_time, location) VALUES 
-  (1, 'AI 연구 세미나', '최신 AI 연구 동향 세미나', date('now', '+3 days'), '14:00', '16:00', '본관 세미나실'),
-  (1, '논문 발표', '월간 연구 진행 상황 발표', date('now', '+10 days'), '10:00', '12:00', '연구동 3층'),
-  (2, '머신러닝 워크샵', '실습 중심 머신러닝 워크샵', date('now', '+5 days'), '09:00', '17:00', '교육관');
+-- 샘플 세미나 (일부는 공유)
+INSERT OR IGNORE INTO seminars (user_id, title, description, event_date, start_time, end_time, location, is_shared) VALUES 
+  (1, 'AI 연구 세미나', '최신 AI 연구 동향 세미나', date('now', '+3 days'), '14:00', '16:00', '본관 세미나실', 1),
+  (1, '논문 발표', '월간 연구 진행 상황 발표', date('now', '+10 days'), '10:00', '12:00', '연구동 3층', 0),
+  (2, '머신러닝 워크샵', '실습 중심 머신러닝 워크샵', date('now', '+5 days'), '09:00', '17:00', '교육관', 1);
 
 -- 샘플 출장
 INSERT OR IGNORE INTO business_trips (user_id, destination, purpose, start_date, end_date, status) VALUES 
   (1, '서울', '학회 참석', date('now', '+14 days'), date('now', '+16 days'), 'planned'),
   (2, '부산', '연구 협력 미팅', date('now', '+20 days'), date('now', '+21 days'), 'planned');
+
+-- 샘플 코멘트 (관리자가 연구원에게)
+INSERT OR IGNORE INTO comments (user_id, admin_id, comment_text, related_type, related_id) VALUES 
+  (1, 3, '실험 결과가 매우 좋습니다. 다음 단계로 진행하세요.', 'note', 1),
+  (1, 3, '이번 주 연구 시간이 부족한 것 같습니다. 시간 관리에 신경 써주세요.', NULL, NULL),
+  (2, 3, '문헌 조사가 잘 되어 있습니다. 계속 좋은 연구 부탁드립니다.', 'note', 3);

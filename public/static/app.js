@@ -281,6 +281,16 @@ async function showDashboard() {
                   class="px-6 py-4 text-sm font-medium text-gray-600 hover:text-blue-600 hover:border-blue-600 border-b-2 border-transparent">
                   <i class="fas fa-calendar-alt mr-2"></i>캘린더
                 </button>
+                <button onclick="showStats()" 
+                  class="px-6 py-4 text-sm font-medium text-gray-600 hover:text-blue-600 hover:border-blue-600 border-b-2 border-transparent">
+                  <i class="fas fa-chart-bar mr-2"></i>통계
+                </button>
+                ${currentUser.role === 'admin' ? `
+                <button onclick="showAdminDashboard()" 
+                  class="px-6 py-4 text-sm font-medium text-gray-600 hover:text-blue-600 hover:border-blue-600 border-b-2 border-transparent">
+                  <i class="fas fa-users-cog mr-2"></i>관리자
+                </button>
+                ` : ''}
               </nav>
             </div>
           </div>
@@ -1169,6 +1179,17 @@ function showSeminarForm(seminarId = null) {
             placeholder="세미나실">
         </div>
         
+        <div>
+          <label class="flex items-center">
+            <input type="checkbox" id="seminar-shared" class="mr-2">
+            <span class="text-sm font-medium text-gray-700">모든 사용자와 공유</span>
+          </label>
+          <p class="text-xs text-gray-500 mt-1">
+            <i class="fas fa-info-circle mr-1"></i>
+            체크하면 다른 연구원들도 이 세미나를 볼 수 있습니다
+          </p>
+        </div>
+        
         <div class="flex space-x-4">
           <button onclick="saveSeminar()" 
             class="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700">
@@ -1192,6 +1213,7 @@ async function saveSeminar() {
   const start_time = document.getElementById('seminar-start-time').value;
   const end_time = document.getElementById('seminar-end-time').value;
   const location = document.getElementById('seminar-location').value;
+  const is_shared = document.getElementById('seminar-shared').checked;
   
   if (!title || !event_date) {
     alert('제목과 날짜를 입력해주세요.');
@@ -1205,7 +1227,8 @@ async function saveSeminar() {
       event_date,
       start_time,
       end_time,
-      location
+      location,
+      is_shared
     });
     showCalendar();
   } catch (error) {
@@ -1308,6 +1331,306 @@ async function saveBusinessTrip() {
   } catch (error) {
     console.error('Save business trip error:', error);
     alert('저장에 실패했습니다.');
+  }
+}
+
+// ==================== 통계 탭 ====================
+
+// 통계 화면
+async function showStats() {
+  currentView = 'stats';
+  
+  try {
+    const summary = await api.get('/stats/summary');
+    const weekly = await api.get('/stats/weekly');
+    
+    const stats = summary.data;
+    const weeklyData = weekly.data;
+    
+    // 이번 주 데이터 계산
+    const thisWeekResearch = stats.this_week.find(s => s.record_type === 'research')?.total_minutes || 0;
+    const thisWeekStudy = stats.this_week.find(s => s.record_type === 'study')?.total_minutes || 0;
+    
+    // 지난 주 데이터 계산
+    const lastWeekResearch = stats.last_week.find(s => s.record_type === 'research')?.total_minutes || 0;
+    const lastWeekStudy = stats.last_week.find(s => s.record_type === 'study')?.total_minutes || 0;
+    
+    // 이번 달 데이터 계산
+    const thisMonthResearch = stats.this_month.find(s => s.record_type === 'research')?.total_minutes || 0;
+    const thisMonthStudy = stats.this_month.find(s => s.record_type === 'study')?.total_minutes || 0;
+    
+    // 주간 상세 데이터 정리
+    const dailyData = {};
+    weeklyData.forEach(record => {
+      if (!dailyData[record.record_date]) {
+        dailyData[record.record_date] = { research: 0, study: 0 };
+      }
+      dailyData[record.record_date][record.record_type] = record.total_minutes;
+    });
+    
+    const dailyHTML = Object.keys(dailyData).sort().reverse().map(date => {
+      const data = dailyData[date];
+      return `
+        <div class="border-b border-gray-200 py-3 last:border-0">
+          <div class="flex justify-between items-center">
+            <div class="font-semibold text-gray-800">${date}</div>
+            <div class="flex space-x-4">
+              <span class="text-green-600">
+                <i class="fas fa-flask mr-1"></i>연구: ${data.research}분
+              </span>
+              <span class="text-purple-600">
+                <i class="fas fa-graduation-cap mr-1"></i>공부: ${data.study}분
+              </span>
+              <span class="text-blue-600 font-bold">
+                합계: ${data.research + data.study}분
+              </span>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+    
+    document.getElementById('content-area').innerHTML = `
+      <div>
+        <h2 class="text-xl font-bold text-gray-800 mb-6">
+          <i class="fas fa-chart-bar mr-2"></i>시간 통계
+        </h2>
+        
+        <!-- 요약 카드 -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+          <!-- 이번 주 -->
+          <div class="bg-gradient-to-br from-blue-500 to-blue-600 p-6 rounded-lg shadow-lg text-white">
+            <h3 class="text-lg font-semibold mb-4">이번 주 (최근 7일)</h3>
+            <div class="space-y-2">
+              <div class="flex justify-between">
+                <span>연구:</span>
+                <span class="font-bold">${Math.floor(thisWeekResearch / 60)}시간 ${thisWeekResearch % 60}분</span>
+              </div>
+              <div class="flex justify-between">
+                <span>공부:</span>
+                <span class="font-bold">${Math.floor(thisWeekStudy / 60)}시간 ${thisWeekStudy % 60}분</span>
+              </div>
+              <div class="flex justify-between pt-2 border-t border-blue-400">
+                <span>합계:</span>
+                <span class="font-bold text-xl">${Math.floor((thisWeekResearch + thisWeekStudy) / 60)}시간 ${(thisWeekResearch + thisWeekStudy) % 60}분</span>
+              </div>
+            </div>
+          </div>
+          
+          <!-- 지난 주 -->
+          <div class="bg-gradient-to-br from-green-500 to-green-600 p-6 rounded-lg shadow-lg text-white">
+            <h3 class="text-lg font-semibold mb-4">지난 주 (8-14일 전)</h3>
+            <div class="space-y-2">
+              <div class="flex justify-between">
+                <span>연구:</span>
+                <span class="font-bold">${Math.floor(lastWeekResearch / 60)}시간 ${lastWeekResearch % 60}분</span>
+              </div>
+              <div class="flex justify-between">
+                <span>공부:</span>
+                <span class="font-bold">${Math.floor(lastWeekStudy / 60)}시간 ${lastWeekStudy % 60}분</span>
+              </div>
+              <div class="flex justify-between pt-2 border-t border-green-400">
+                <span>합계:</span>
+                <span class="font-bold text-xl">${Math.floor((lastWeekResearch + lastWeekStudy) / 60)}시간 ${(lastWeekResearch + lastWeekStudy) % 60}분</span>
+              </div>
+            </div>
+          </div>
+          
+          <!-- 이번 달 -->
+          <div class="bg-gradient-to-br from-purple-500 to-purple-600 p-6 rounded-lg shadow-lg text-white">
+            <h3 class="text-lg font-semibold mb-4">이번 달 (최근 30일)</h3>
+            <div class="space-y-2">
+              <div class="flex justify-between">
+                <span>연구:</span>
+                <span class="font-bold">${Math.floor(thisMonthResearch / 60)}시간 ${thisMonthResearch % 60}분</span>
+              </div>
+              <div class="flex justify-between">
+                <span>공부:</span>
+                <span class="font-bold">${Math.floor(thisMonthStudy / 60)}시간 ${thisMonthStudy % 60}분</span>
+              </div>
+              <div class="flex justify-between pt-2 border-t border-purple-400">
+                <span>합계:</span>
+                <span class="font-bold text-xl">${Math.floor((thisMonthResearch + thisMonthStudy) / 60)}시간 ${(thisMonthResearch + thisMonthStudy) % 60}분</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- 일별 상세 -->
+        <div class="bg-white rounded-lg shadow-sm p-6">
+          <h3 class="text-lg font-semibold text-gray-800 mb-4">주간 상세 기록</h3>
+          <div>
+            ${dailyHTML || '<p class="text-center text-gray-500 py-8">최근 7일간 기록이 없습니다.</p>'}
+          </div>
+        </div>
+      </div>
+    `;
+  } catch (error) {
+    console.error('Stats error:', error);
+  }
+}
+
+// ==================== 관리자 대시보드 ====================
+
+// 관리자 대시보드
+async function showAdminDashboard() {
+  currentView = 'admin';
+  
+  if (currentUser.role !== 'admin') {
+    alert('관리자 권한이 필요합니다.');
+    showDashboard();
+    return;
+  }
+  
+  try {
+    const response = await api.get('/admin/researchers');
+    const researchers = response.data;
+    
+    const researchersHTML = researchers.map(researcher => `
+      <div class="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow cursor-pointer"
+           onclick="showResearcherDetail(${researcher.id})">
+        <div class="flex justify-between items-start">
+          <div>
+            <h3 class="font-semibold text-gray-800">${researcher.name}</h3>
+            <p class="text-sm text-gray-600">${researcher.email}</p>
+            <p class="text-xs text-gray-400 mt-1">가입일: ${new Date(researcher.created_at).toLocaleDateString('ko-KR')}</p>
+          </div>
+          <i class="fas fa-chevron-right text-gray-400"></i>
+        </div>
+      </div>
+    `).join('');
+    
+    document.getElementById('content-area').innerHTML = `
+      <div>
+        <h2 class="text-xl font-bold text-gray-800 mb-6">
+          <i class="fas fa-users-cog mr-2"></i>관리자 대시보드
+        </h2>
+        
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          ${researchersHTML}
+        </div>
+      </div>
+    `;
+  } catch (error) {
+    console.error('Admin dashboard error:', error);
+  }
+}
+
+// 연구원 상세 정보
+async function showResearcherDetail(researcherId) {
+  try {
+    const response = await api.get(`/admin/researcher/${researcherId}`);
+    const data = response.data;
+    const researcher = data.researcher;
+    
+    // 최근 시간 기록
+    const recentResearch = data.recent_time.find(t => t.record_type === 'research')?.total || 0;
+    const recentStudy = data.recent_time.find(t => t.record_type === 'study')?.total || 0;
+    
+    // 휴가 신청 목록
+    const vacationsHTML = data.vacations.map(vacation => `
+      <div class="border-b border-gray-200 py-2 last:border-0">
+        <div class="flex justify-between">
+          <span class="text-sm">${vacation.start_date} ~ ${vacation.end_date}</span>
+          <span class="text-xs px-2 py-1 rounded ${
+            vacation.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+            vacation.status === 'approved' ? 'bg-green-100 text-green-800' :
+            'bg-red-100 text-red-800'
+          }">
+            ${vacation.status === 'pending' ? '대기중' : vacation.status === 'approved' ? '승인' : '거절'}
+          </span>
+        </div>
+      </div>
+    `).join('') || '<p class="text-sm text-gray-500 text-center py-4">휴가 신청 없음</p>';
+    
+    // 최근 평가
+    const evaluationsHTML = data.evaluations.map(eval => `
+      <div class="border-b border-gray-200 py-2 last:border-0">
+        <div class="text-sm text-gray-800">${eval.evaluation_date}</div>
+        <div class="flex space-x-4 mt-1 text-xs">
+          <span>생산성: ${eval.productivity_score}/5</span>
+          <span>품질: ${eval.quality_score}/5</span>
+          <span>협업: ${eval.collaboration_score}/5</span>
+        </div>
+      </div>
+    `).join('') || '<p class="text-sm text-gray-500 text-center py-4">평가 기록 없음</p>';
+    
+    document.getElementById('content-area').innerHTML = `
+      <div>
+        <div class="flex items-center mb-6">
+          <button onclick="showAdminDashboard()" class="mr-4 text-gray-600 hover:text-gray-800">
+            <i class="fas fa-arrow-left mr-2"></i>돌아가기
+          </button>
+          <h2 class="text-xl font-bold text-gray-800">
+            ${researcher.name} 상세 정보
+          </h2>
+        </div>
+        
+        <!-- 통계 카드 -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+          <div class="bg-white p-6 rounded-lg shadow-sm">
+            <p class="text-sm text-gray-600">연구노트</p>
+            <p class="text-3xl font-bold text-blue-600">${data.notes_count}</p>
+          </div>
+          <div class="bg-white p-6 rounded-lg shadow-sm">
+            <p class="text-sm text-gray-600">최근 7일 연구시간</p>
+            <p class="text-3xl font-bold text-green-600">${Math.floor(recentResearch / 60)}h ${recentResearch % 60}m</p>
+          </div>
+          <div class="bg-white p-6 rounded-lg shadow-sm">
+            <p class="text-sm text-gray-600">최근 7일 공부시간</p>
+            <p class="text-3xl font-bold text-purple-600">${Math.floor(recentStudy / 60)}h ${recentStudy % 60}m</p>
+          </div>
+        </div>
+        
+        <!-- 상세 정보 -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+          <div class="bg-white rounded-lg shadow-sm p-6">
+            <h3 class="font-semibold text-gray-800 mb-4">휴가 신청</h3>
+            ${vacationsHTML}
+          </div>
+          <div class="bg-white rounded-lg shadow-sm p-6">
+            <h3 class="font-semibold text-gray-800 mb-4">최근 평가</h3>
+            ${evaluationsHTML}
+          </div>
+        </div>
+        
+        <!-- 코멘트 작성 -->
+        <div class="bg-white rounded-lg shadow-sm p-6">
+          <h3 class="font-semibold text-gray-800 mb-4">코멘트 작성</h3>
+          <textarea id="comment-text" rows="3" 
+            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+            placeholder="연구원에게 전달할 코멘트를 입력하세요..."></textarea>
+          <button onclick="saveComment(${researcher.id})" 
+            class="mt-3 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+            <i class="fas fa-comment mr-2"></i>코멘트 전송
+          </button>
+        </div>
+      </div>
+    `;
+  } catch (error) {
+    console.error('Researcher detail error:', error);
+  }
+}
+
+// 코멘트 저장
+async function saveComment(userId) {
+  const comment_text = document.getElementById('comment-text').value;
+  
+  if (!comment_text) {
+    alert('코멘트 내용을 입력해주세요.');
+    return;
+  }
+  
+  try {
+    await api.post('/comments', {
+      user_id: userId,
+      comment_text
+    });
+    alert('코멘트가 전송되었습니다.');
+    document.getElementById('comment-text').value = '';
+  } catch (error) {
+    console.error('Save comment error:', error);
+    alert('코멘트 전송에 실패했습니다.');
   }
 }
 
