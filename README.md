@@ -7,9 +7,10 @@
 
 ### ✅ 완료된 기능
 1. **사용자 인증**
-   - 로그인/회원가입 시스템
+   - 아이디(또는 이메일) 기반 로그인/회원가입 시스템
    - 세션 기반 인증 (7일 유효)
    - 안전한 토큰 관리
+   - 비밀번호 재설정 이메일 발송 및 토큰 기반 복구
 
 2. **연구노트 관리** ⭐ 최신 업데이트!
    - 연구노트 작성, 수정, 삭제
@@ -30,6 +31,7 @@
    - 휴가 신청 (시작일~종료일, 사유)
    - 신청 상태 관리 (대기/승인/거절)
    - 대기중인 신청 취소 가능
+   - **관리자 승인/거절** 및 사유 기록 지원
 
 5. **셀프 평가 시스템**
    - 일일 자가 평가 (생산성, 품질, 협업)
@@ -68,7 +70,8 @@
 10. **관리자 기능 (NEW!)**
     - 모든 연구원 목록 조회
     - 연구원별 상세 통계
-    - 코멘트 작성 및 전송
+    - 연구노트별 코멘트 관리 및 답글 확인
+    - 휴가 신청 승인/거절 및 사유 기록
     - 휴가/평가 현황 확인
 
 11. **대시보드**
@@ -77,12 +80,24 @@
     - 대기중인 휴가 신청
     - 최근 평가 평균
 
+12. **계정 복구 (NEW!)**
+    - 비밀번호 재설정 링크 이메일 발송
+    - 토큰 기반 새 비밀번호 설정
+    - 이메일 미설정 시 개발용 리셋 링크 반환
+
+13. **코멘트 협업 (NEW!)**
+    - 관리자는 연구노트별로 코멘트를 작성하고 스레드 관리
+    - 연구원과 관리자는 각 코멘트에 답글을 남겨 대화 가능
+    - 노트 상세 화면과 관리자 대시보드에서 동일한 스레드 확인
+
 ## API 엔드포인트
 
 ### 인증
-- `POST /api/login` - 로그인 (email, password)
-- `POST /api/register` - 회원가입 (email, password, name)
+- `POST /api/login` - 로그인 (identifier, password)
+- `POST /api/register` - 회원가입 (email, password, name, username?, recoveryEmail?)
 - `POST /api/logout` - 로그아웃
+- `POST /api/password-reset/request` - 비밀번호 재설정 링크 요청 (identifier)
+- `POST /api/password-reset/confirm` - 재설정 토큰으로 새 비밀번호 설정 (token, newPassword)
 
 ### 연구노트
 - `GET /api/notes` - 노트 목록 조회 (검색: ?search=키워드, 태그 필터: ?tag=태그명)
@@ -128,11 +143,15 @@
 
 ### 관리자 (admin 권한 필요)
 - `GET /api/admin/researchers` - 모든 연구원 목록
-- `GET /api/admin/researcher/:id` - 연구원 상세 정보
+- `GET /api/admin/researcher/:id` - 연구원 상세 정보 (연구노트, 휴가, 평가 포함)
+- `GET /api/admin/vacations?status=pending|approved|rejected|all` - 휴가 신청 관리 목록
+- `POST /api/admin/vacations/:id/decision` - 휴가 신청 승인/거절 (body: { decision, reason? })
 
-### 코멘트 (관리자 → 연구원)
-- `GET /api/comments` - 받은 코멘트 목록
-- `POST /api/comments` - 코멘트 작성 (admin만)
+### 코멘트 (관리자 ↔ 연구원)
+- `GET /api/comments` - 받은 코멘트 목록 (관리자는 `?userId=`로 대상 연구원 지정 가능)
+- `GET /api/notes/:id/comments` - 특정 연구노트의 코멘트/답글 스레드
+- `POST /api/comments` - 연구노트 코멘트 작성 (admin만, body: { related_id, comment_text })
+- `POST /api/comments/:id/replies` - 코멘트에 답글 작성 (관리자/연구원)
 - `DELETE /api/comments/:id` - 코멘트 삭제 (admin만)
 
 ### 대시보드
@@ -158,6 +177,7 @@
 비밀번호: password123
 
 # 관리자 계정 (지도교수)
+아이디: admin
 이메일: admin@example.com
 비밀번호: password123
 이름: 박지도교수
@@ -170,24 +190,45 @@
 ## 데이터 아키텍처
 
 ### 데이터 모델
-- **users**: 사용자 정보 (id, email, password, name, role)
+- **users**: 사용자 정보 (id, email, username, recovery_email, password, name, role)
 - **research_notes**: 연구노트 (id, user_id, title, content, gdrive_url, created_at, updated_at)
 - **time_records**: 시간 기록 (id, user_id, record_type, duration_minutes, description, record_date)
-- **vacation_requests**: 휴가 신청 (id, user_id, start_date, end_date, reason, status)
+- **vacation_requests**: 휴가 신청 (id, user_id, start_date, end_date, reason, status, approved_by, approved_at, decision_reason)
 - **self_evaluations**: 셀프 평가 (id, user_id, evaluation_date, scores, notes)
 - **seminars**: 세미나 일정 (id, user_id, title, description, event_date, start_time, end_time, location)
 - **business_trips**: 출장 일정 (id, user_id, destination, purpose, start_date, end_date, status)
 - **sessions**: 세션 관리 (id, user_id, token, expires_at)
+- **password_reset_tokens**: 비밀번호 재설정 토큰 (id, user_id, token, expires_at, used)
+- **comment_replies**: 코멘트 답글 (id, comment_id, user_id, role, reply_text, created_at)
 
 ### 스토리지 서비스
 - **Cloudflare D1**: SQLite 기반 관계형 데이터베이스
 - **Google Drive**: 연구 파일 저장 (외부 서비스, URL 링크 방식)
 
+## 환경 변수 / Secrets
+- `RESEND_API_KEY`: Resend API 키 (비밀번호 재설정 이메일 발송용)
+- `RESEND_FROM_EMAIL`: Resend에서 사용할 발신 주소 (예: `Research Notes <no-reply@example.com>`)
+- `APP_BASE_URL`: 이메일 링크에 사용할 기본 도메인 (선택, 미설정 시 요청 도메인 사용)
+
+Cloudflare Pages에 배포할 때는 다음 명령으로 설정하세요.
+```bash
+npx wrangler pages secret put RESEND_API_KEY --project-name btgday
+npx wrangler pages secret put RESEND_FROM_EMAIL --project-name btgday
+npx wrangler pages secret put APP_BASE_URL --project-name btgday
+```
+※ 이메일 발송이 설정되지 않은 경우 개발 편의를 위해 API 응답과 서버 로그에 재설정 링크가 포함됩니다.
+
 ## 사용자 가이드
 
 ### 로그인
-1. 첫 화면에서 이메일과 비밀번호 입력
-2. 또는 "회원가입" 버튼으로 새 계정 생성
+1. 첫 화면에서 아이디 또는 이메일과 비밀번호를 입력합니다.
+2. 또는 "회원가입" 버튼으로 새 계정을 생성합니다.
+
+### 비밀번호 재설정
+1. 로그인 화면에서 "비밀번호를 잊으셨나요?" 버튼을 클릭합니다.
+2. 아이디 또는 이메일을 입력하고 재설정 링크를 요청합니다.
+3. 이메일로 받은 링크를 클릭하거나 토큰을 복사해 새 비밀번호를 설정합니다.
+4. 이메일 설정이 없는 개발 환경에서는 API 응답/콘솔에 제공된 링크를 사용할 수 있습니다.
 
 ### 연구노트 작성
 1. "연구노트" 탭 클릭
@@ -208,6 +249,17 @@
 2. "휴가 신청" 버튼 클릭
 3. 시작일, 종료일, 사유 입력
 4. "신청" 버튼 클릭
+
+### 휴가 승인 (관리자)
+1. 상단 네비게이션에서 "관리자" 탭을 엽니다.
+2. "대기중인 휴가 신청" 카드에서 요청 내용을 검토합니다.
+3. 승인 또는 거절 버튼을 클릭합니다. (거절 시 사유를 입력할 수 있습니다.)
+4. 처리 결과가 즉시 연구원 화면과 데이터베이스에 반영됩니다.
+
+### 코멘트 관리 및 답글
+- **연구원**: 연구노트 목록에서 "코멘트 보기" 버튼을 눌러 관리자 피드백과 답글을 확인하고, 필요 시 답글을 작성합니다.
+- **관리자**: 연구원 상세 화면의 "연구노트 및 코멘트 관리" 섹션에서 코멘트를 작성하고 스레드를 모니터링합니다.
+- 코멘트와 답글은 실시간으로 갱신되며, 모든 참여자가 같은 스레드를 확인할 수 있습니다.
 
 ### 셀프 평가
 1. "셀프 평가" 탭 클릭

@@ -4,6 +4,40 @@ let currentToken = null;
 let currentView = 'dashboard';
 let api;
 
+function escapeHTML(value) {
+  if (value === undefined || value === null) return '';
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function formatDateTime(value) {
+  if (!value) return '';
+  try {
+    return new Date(value).toLocaleString('ko-KR', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  } catch (error) {
+    return value;
+  }
+}
+
+function formatDate(value) {
+  if (!value) return '';
+  try {
+    return new Date(value).toLocaleDateString('ko-KR');
+  } catch (error) {
+    return value;
+  }
+}
+
 // DOMContentLoaded 이벤트를 기다림
 document.addEventListener('DOMContentLoaded', function() {
   console.log('앱 초기화 시작...');
@@ -20,6 +54,15 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     return config;
   });
+
+  const params = new URLSearchParams(window.location.search);
+  const resetToken = params.get('resetToken');
+
+  if (resetToken) {
+    showResetConfirm(resetToken);
+    history.replaceState({}, document.title, window.location.pathname);
+    return;
+  }
 
   // 인증 확인 및 앱 시작
   checkAuth();
@@ -62,17 +105,23 @@ function showLogin() {
         
         <div id="login-form">
           <div class="mb-4">
-            <label class="block text-sm font-medium text-gray-700 mb-2">이메일</label>
-            <input type="email" id="login-email" 
+            <label class="block text-sm font-medium text-gray-700 mb-2">아이디 또는 이메일</label>
+            <input type="text" id="login-identifier" 
               class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              placeholder="researcher@example.com">
+              placeholder="admin 또는 researcher@example.com">
           </div>
           
-          <div class="mb-6">
+          <div class="mb-2">
             <label class="block text-sm font-medium text-gray-700 mb-2">비밀번호</label>
             <input type="password" id="login-password" 
               class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               placeholder="••••••••">
+          </div>
+
+          <div class="flex justify-end mb-6">
+            <button onclick="showResetRequest()" class="text-sm text-blue-600 hover:underline">
+              비밀번호를 잊으셨나요?
+            </button>
           </div>
           
           <button onclick="handleLogin()" 
@@ -86,11 +135,13 @@ function showLogin() {
           </button>
         </div>
         
-        <div id="error-message" class="mt-4 text-red-600 text-sm text-center hidden"></div>
+        <div id="info-message" class="mt-4 text-blue-600 text-sm text-center hidden"></div>
+        <div id="error-message" class="mt-2 text-red-600 text-sm text-center hidden"></div>
         
-        <div class="mt-6 p-4 bg-blue-50 rounded-lg">
-          <p class="text-sm text-gray-600 text-center mb-2">테스트 계정:</p>
-          <p class="text-xs text-gray-500 text-center">researcher1@example.com / password123</p>
+        <div class="mt-6 p-4 bg-blue-50 rounded-lg text-center space-y-2">
+          <p class="text-sm text-gray-600">테스트 계정 안내</p>
+          <p class="text-xs text-gray-500">관리자 &ndash; 아이디: <strong>admin</strong> / 비밀번호: <strong>password123</strong></p>
+          <p class="text-xs text-gray-500">연구원 &ndash; researcher1@example.com / password123</p>
         </div>
       </div>
     </div>
@@ -113,12 +164,28 @@ function showRegister() {
               class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               placeholder="홍길동">
           </div>
+
+          <div class="mb-4">
+            <label class="block text-sm font-medium text-gray-700 mb-2">아이디</label>
+            <input type="text" id="register-username" 
+              class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              placeholder="researcher01">
+            <p class="text-xs text-gray-400 mt-1">아이디는 로그인 시 사용됩니다. 미입력 시 이메일 주소 앞부분이 사용됩니다.</p>
+          </div>
           
           <div class="mb-4">
             <label class="block text-sm font-medium text-gray-700 mb-2">이메일</label>
             <input type="email" id="register-email" 
               class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               placeholder="researcher@example.com">
+          </div>
+
+          <div class="mb-4">
+            <label class="block text-sm font-medium text-gray-700 mb-2">복구 이메일</label>
+            <input type="email" id="register-recovery-email" 
+              class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              placeholder="비밀번호 찾기용 이메일 (선택)">
+            <p class="text-xs text-gray-400 mt-1">비밀번호 재설정 링크가 발송되는 주소입니다. 미입력 시 로그인 이메일로 발송됩니다.</p>
           </div>
           
           <div class="mb-6">
@@ -139,7 +206,8 @@ function showRegister() {
           </button>
         </div>
         
-        <div id="error-message" class="mt-4 text-red-600 text-sm text-center hidden"></div>
+        <div id="info-message" class="mt-4 text-blue-600 text-sm text-center hidden"></div>
+        <div id="error-message" class="mt-2 text-red-600 text-sm text-center hidden"></div>
       </div>
     </div>
   `;
@@ -147,11 +215,16 @@ function showRegister() {
 
 // 로그인 처리
 async function handleLogin() {
-  const email = document.getElementById('login-email').value;
-  const password = document.getElementById('login-password').value;
+  const identifier = document.getElementById('login-identifier').value.trim();
+  const password = document.getElementById('login-password').value.trim();
+
+  if (!identifier || !password) {
+    showError('아이디(또는 이메일)와 비밀번호를 모두 입력해주세요.');
+    return;
+  }
   
   try {
-    const response = await api.post('/login', { email, password });
+    const response = await api.post('/login', { identifier, password });
     currentToken = response.data.token;
     currentUser = response.data.user;
     
@@ -166,16 +239,133 @@ async function handleLogin() {
 
 // 회원가입 처리
 async function handleRegister() {
-  const name = document.getElementById('register-name').value;
-  const email = document.getElementById('register-email').value;
-  const password = document.getElementById('register-password').value;
+  const name = document.getElementById('register-name').value.trim();
+  const username = document.getElementById('register-username').value.trim();
+  const email = document.getElementById('register-email').value.trim();
+  const recoveryEmail = document.getElementById('register-recovery-email').value.trim();
+  const password = document.getElementById('register-password').value.trim();
+
+  if (!name || !email || !password) {
+    showError('이름, 이메일, 비밀번호를 모두 입력해주세요.');
+    return;
+  }
   
   try {
-    await api.post('/register', { email, password, name });
+    await api.post('/register', { email, password, name, username, recoveryEmail });
     alert('회원가입이 완료되었습니다. 로그인해주세요.');
     showLogin();
   } catch (error) {
     showError(error.response?.data?.error || '회원가입에 실패했습니다.');
+  }
+}
+
+function showResetRequest() {
+  document.getElementById('app').innerHTML = `
+    <div class="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-500 to-purple-600">
+      <div class="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-md">
+        <h1 class="text-3xl font-bold text-center mb-4 text-gray-800">
+          <i class="fas fa-unlock-alt mr-2"></i>비밀번호 재설정
+        </h1>
+        <p class="text-sm text-gray-600 text-center mb-6">아이디 또는 이메일을 입력하면 비밀번호 재설정 링크를 보내드립니다.</p>
+        <div class="mb-4">
+          <label class="block text-sm font-medium text-gray-700 mb-2">아이디 또는 이메일</label>
+          <input type="text" id="reset-identifier"
+            class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            placeholder="admin 또는 researcher@example.com">
+        </div>
+        <button onclick="handleResetRequest()"
+          class="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors mb-3">
+          <i class="fas fa-paper-plane mr-2"></i>재설정 링크 보내기
+        </button>
+        <button onclick="showLogin()"
+          class="w-full bg-gray-200 text-gray-700 py-3 rounded-lg font-semibold hover:bg-gray-300 transition-colors">
+          <i class="fas fa-arrow-left mr-2"></i>로그인으로 돌아가기
+        </button>
+        <div id="reset-request-message" class="mt-4 text-sm text-green-600 text-center hidden"></div>
+        <div id="error-message" class="mt-2 text-red-600 text-sm text-center hidden"></div>
+        <div id="reset-debug-link" class="mt-4 text-xs text-gray-500 text-center hidden"></div>
+      </div>
+    </div>
+  `;
+}
+
+async function handleResetRequest() {
+  const identifier = document.getElementById('reset-identifier').value.trim();
+
+  if (!identifier) {
+    showError('아이디 또는 이메일을 입력해주세요.');
+    return;
+  }
+
+  try {
+    const response = await api.post('/password-reset/request', { identifier });
+    showMessage('reset-request-message', response.data.message || '재설정 안내 메일을 전송했습니다.', 'success', null);
+
+    if (response.data.resetLink) {
+      const debug = document.getElementById('reset-debug-link');
+      if (debug) {
+        debug.innerHTML = `테스트용 재설정 링크: <a class="text-blue-600 underline" href="${response.data.resetLink}">${response.data.resetLink}</a>`;
+        debug.classList.remove('hidden');
+      }
+    }
+  } catch (error) {
+    showError(error.response?.data?.error || '비밀번호 재설정 요청 중 오류가 발생했습니다.');
+  }
+}
+
+function showResetConfirm(token = '') {
+  document.getElementById('app').innerHTML = `
+    <div class="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-500 to-purple-600">
+      <div class="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-md">
+        <h1 class="text-3xl font-bold text-center mb-4 text-gray-800">
+          <i class="fas fa-key mr-2"></i>새 비밀번호 설정
+        </h1>
+        <p class="text-sm text-gray-600 text-center mb-6">메일로 받은 토큰과 새 비밀번호를 입력해주세요.</p>
+        <div class="mb-4">
+          <label class="block text-sm font-medium text-gray-700 mb-2">재설정 토큰</label>
+          <input type="text" id="reset-token"
+            class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            placeholder="이메일로 받은 토큰"
+            value="${token}">
+        </div>
+        <div class="mb-6">
+          <label class="block text-sm font-medium text-gray-700 mb-2">새 비밀번호</label>
+          <input type="password" id="reset-new-password"
+            class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            placeholder="새로운 비밀번호">
+        </div>
+        <button onclick="handleResetConfirm()"
+          class="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors mb-3">
+          <i class="fas fa-sync mr-2"></i>비밀번호 재설정
+        </button>
+        <button onclick="showLogin()"
+          class="w-full bg-gray-200 text-gray-700 py-3 rounded-lg font-semibold hover:bg-gray-300 transition-colors">
+          <i class="fas fa-arrow-left mr-2"></i>로그인 화면으로 돌아가기
+        </button>
+        <div id="reset-confirm-message" class="mt-4 text-sm text-green-600 text-center hidden"></div>
+        <div id="error-message" class="mt-2 text-red-600 text-sm text-center hidden"></div>
+      </div>
+    </div>
+  `;
+}
+
+async function handleResetConfirm() {
+  const token = document.getElementById('reset-token').value.trim();
+  const newPassword = document.getElementById('reset-new-password').value.trim();
+
+  if (!token || !newPassword) {
+    showError('토큰과 새 비밀번호를 모두 입력해주세요.');
+    return;
+  }
+
+  try {
+    await api.post('/password-reset/confirm', { token, newPassword });
+    showMessage('reset-confirm-message', '비밀번호가 변경되었습니다. 새로운 비밀번호로 로그인해주세요.', 'success', null);
+    setTimeout(() => {
+      showLogin();
+    }, 2000);
+  } catch (error) {
+    showError(error.response?.data?.error || '비밀번호 재설정에 실패했습니다.');
   }
 }
 
@@ -189,12 +379,197 @@ async function handleLogout() {
   showLogin();
 }
 
+function showMessage(elementId, message, type = 'info', duration = 3000) {
+  const element = document.getElementById(elementId);
+  if (!element) return;
+
+  element.textContent = message;
+  element.classList.remove('hidden');
+  element.classList.remove('text-red-600', 'text-green-600', 'text-blue-600');
+
+  if (type === 'error') {
+    element.classList.add('text-red-600');
+  } else if (type === 'success') {
+    element.classList.add('text-green-600');
+  } else {
+    element.classList.add('text-blue-600');
+  }
+
+  if (duration !== null) {
+    setTimeout(() => element.classList.add('hidden'), duration);
+  }
+}
+
 // 에러 표시
 function showError(message) {
-  const errorDiv = document.getElementById('error-message');
-  errorDiv.textContent = message;
-  errorDiv.classList.remove('hidden');
-  setTimeout(() => errorDiv.classList.add('hidden'), 3000);
+  showMessage('error-message', message, 'error');
+}
+
+async function toggleNoteComments(noteId) {
+  const container = document.getElementById(`note-comments-${noteId}`);
+  if (!container) return;
+
+  if (container.classList.contains('hidden')) {
+    container.classList.remove('hidden');
+    await loadNoteComments(noteId);
+  } else {
+    container.classList.add('hidden');
+  }
+}
+
+async function loadNoteComments(noteId) {
+  const container = document.getElementById(`note-comments-${noteId}`);
+  if (!container) return;
+
+  container.innerHTML = '<p class="text-sm text-gray-500">코멘트를 불러오는 중입니다...</p>';
+
+  try {
+    const response = await api.get(`/notes/${noteId}/comments`);
+    const comments = response.data || [];
+    container.innerHTML = renderNoteComments(noteId, comments);
+  } catch (error) {
+    console.error('Load comments error:', error);
+    container.innerHTML = '<p class="text-sm text-red-600">코멘트를 불러오지 못했습니다.</p>';
+  }
+}
+
+function renderNoteComments(noteId, comments) {
+  const hasAdminPrivilege = currentUser && currentUser.role === 'admin';
+
+  const formHTML = hasAdminPrivilege ? `
+    <div class="mb-4">
+      <label class="block text-sm font-semibold text-gray-700 mb-2">관리자 코멘트 작성</label>
+      <textarea id="note-comment-input-${noteId}" rows="3"
+        class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+        placeholder="연구노트에 대한 피드백을 입력하세요..."></textarea>
+      <div class="flex justify-end mt-2">
+        <button onclick="submitNoteComment(${noteId})"
+          class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm">
+          <i class="fas fa-paper-plane mr-2"></i>코멘트 등록
+        </button>
+      </div>
+    </div>
+  ` : '';
+
+  const threadsHTML = comments.length
+    ? comments.map(comment => renderCommentThread(noteId, comment)).join('')
+    : '<p class="text-sm text-gray-500">등록된 코멘트가 없습니다.</p>';
+
+  return `
+    <div class="bg-gray-50 border border-blue-100 rounded-lg p-4">
+      ${formHTML}
+      <div id="note-comment-threads-${noteId}" class="space-y-4 ${hasAdminPrivilege ? 'mt-4' : ''}">
+        ${threadsHTML}
+      </div>
+    </div>
+  `;
+}
+
+function renderCommentThread(noteId, comment) {
+  const replies = Array.isArray(comment.replies) ? comment.replies : [];
+  const repliesHTML = replies.length
+    ? `<div class="mt-4 space-y-3">${replies.map(renderCommentReply).join('')}</div>`
+    : '';
+
+  const canReply = currentUser && (currentUser.role === 'admin' || currentUser.id === comment.user_id);
+  const replyForm = canReply ? `
+    <div class="mt-4">
+      <textarea id="comment-reply-input-${comment.id}" rows="2"
+        class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
+        placeholder="답글을 입력하세요..."></textarea>
+      <div class="flex justify-end mt-2">
+        <button onclick="submitCommentReply(${comment.id}, ${noteId})"
+          class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm">
+          <i class="fas fa-reply mr-2"></i>답글 등록
+        </button>
+      </div>
+    </div>
+  ` : '';
+
+  return `
+    <div class="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+      <div class="flex justify-between items-start">
+        <div>
+          <p class="font-semibold text-gray-800">
+            <i class="fas fa-user-shield text-blue-500 mr-2"></i>${escapeHTML(comment.admin_name || '관리자')}
+          </p>
+          <p class="text-xs text-gray-400">${formatDateTime(comment.created_at)}</p>
+        </div>
+        <span class="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">관리자 코멘트</span>
+      </div>
+      <p class="mt-3 text-sm text-gray-700 whitespace-pre-line">${escapeHTML(comment.comment_text)}</p>
+      ${repliesHTML}
+      ${replyForm}
+    </div>
+  `;
+}
+
+function renderCommentReply(reply) {
+  const isAdmin = reply.role === 'admin';
+  const badgeClass = isAdmin ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700';
+  const iconClass = isAdmin ? 'fas fa-user-shield text-blue-500' : 'fas fa-user text-green-500';
+
+  return `
+    <div class="border-l-2 ${isAdmin ? 'border-blue-300' : 'border-green-300'} pl-4">
+      <div class="flex justify-between items-center">
+        <div class="flex items-center space-x-2">
+          <i class="${iconClass}"></i>
+          <span class="text-sm font-semibold text-gray-700">
+            ${escapeHTML(reply.author_name || (isAdmin ? '관리자' : '연구원'))}
+            ${reply.author_username ? `<span class="text-xs text-gray-400 ml-1">@${escapeHTML(reply.author_username)}</span>` : ''}
+          </span>
+          <span class="text-[11px] ${badgeClass} px-2 py-0.5 rounded">${isAdmin ? '관리자' : '연구원'}</span>
+        </div>
+        <span class="text-xs text-gray-400">${formatDateTime(reply.created_at)}</span>
+      </div>
+      <p class="mt-2 text-sm text-gray-600 whitespace-pre-line">${escapeHTML(reply.reply_text)}</p>
+    </div>
+  `;
+}
+
+async function submitNoteComment(noteId) {
+  const textarea = document.getElementById(`note-comment-input-${noteId}`);
+  if (!textarea) return;
+
+  const text = textarea.value.trim();
+  if (!text) {
+    alert('코멘트 내용을 입력해주세요.');
+    return;
+  }
+
+  try {
+    await api.post('/comments', {
+      related_id: noteId,
+      comment_text: text
+    });
+    textarea.value = '';
+    await loadNoteComments(noteId);
+  } catch (error) {
+    console.error('Submit note comment error:', error);
+    alert(error.response?.data?.error || '코멘트 등록에 실패했습니다.');
+  }
+}
+
+async function submitCommentReply(commentId, noteId) {
+  const textarea = document.getElementById(`comment-reply-input-${commentId}`);
+  if (!textarea) return;
+
+  const text = textarea.value.trim();
+  if (!text) {
+    alert('답글 내용을 입력해주세요.');
+    return;
+  }
+
+  try {
+    await api.post(`/comments/${commentId}/replies`, {
+      reply_text: text
+    });
+    textarea.value = '';
+    await loadNoteComments(noteId);
+  } catch (error) {
+    console.error('Submit comment reply error:', error);
+    alert(error.response?.data?.error || '답글 등록에 실패했습니다.');
+  }
 }
 
 // 대시보드 표시
@@ -219,6 +594,7 @@ async function showDashboard() {
               <div class="flex items-center space-x-4">
                 <span class="text-sm text-gray-600">
                   <i class="fas fa-user mr-1"></i>${currentUser.name}
+                  ${currentUser.username ? `<span class="ml-2 text-xs text-gray-400">@${currentUser.username}</span>` : ''}
                 </span>
                 <button onclick="handleLogout()" 
                   class="text-sm text-gray-600 hover:text-gray-800">
@@ -351,18 +727,28 @@ async function showNotes(searchQuery = '', tagFilter = '') {
         `<span class="inline-block px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded mr-1 cursor-pointer hover:bg-blue-200" 
                onclick="showNotes('', '${tag.trim()}')">#${tag.trim()}</span>`
       ).join('') : '';
+      const safeTitle = escapeHTML(note.title);
+      const safeContent = escapeHTML(note.content);
+      const createdAt = formatDateTime(note.created_at);
+      const driveLink = note.gdrive_url ? escapeHTML(note.gdrive_url) : '';
+      const commentLabel = currentUser.role === 'admin' ? '코멘트 관리' : '코멘트 보기';
       
       return `
         <div class="border-b border-gray-200 py-4 last:border-0">
           <div class="flex justify-between items-start">
             <div class="flex-1">
-              <h3 class="font-semibold text-gray-800 mb-1">${note.title}</h3>
-              <p class="text-sm text-gray-600 mb-2 line-clamp-2">${note.content}</p>
+              <h3 class="font-semibold text-gray-800 mb-1">${safeTitle}</h3>
+              <p class="text-sm text-gray-600 mb-2 whitespace-pre-line">${safeContent}</p>
               ${tags ? `<div class="mb-2">${tags}</div>` : ''}
-              ${note.gdrive_url ? `<a href="${note.gdrive_url}" target="_blank" class="text-xs text-blue-600 hover:underline">
+              ${note.gdrive_url ? `<a href="${driveLink}" target="_blank" class="text-xs text-blue-600 hover:underline">
                 <i class="fab fa-google-drive mr-1"></i>Google Drive에서 보기
               </a>` : ''}
-              <p class="text-xs text-gray-400 mt-1">${new Date(note.created_at).toLocaleString('ko-KR')}</p>
+              <p class="text-xs text-gray-400 mt-1">${createdAt}</p>
+              <button onclick="toggleNoteComments(${note.id})"
+                class="mt-3 inline-flex items-center text-sm text-blue-600 hover:text-blue-800">
+                <i class="fas fa-comments mr-2"></i>${commentLabel}
+              </button>
+              <div id="note-comments-${note.id}" class="mt-3 hidden"></div>
             </div>
             <div class="flex space-x-2 ml-4">
               <button onclick="editNote(${note.id})" 
@@ -1574,17 +1960,51 @@ async function showAdminDashboard() {
   }
   
   try {
-    const response = await api.get('/admin/researchers');
-    const researchers = response.data;
-    
+    const [researchersRes, pendingVacationsRes] = await Promise.all([
+      api.get('/admin/researchers'),
+      api.get('/admin/vacations?status=pending')
+    ]);
+
+    const researchers = researchersRes.data;
+    const pendingVacations = pendingVacationsRes.data || [];
+
+    const vacationCards = pendingVacations.length
+      ? pendingVacations.map(vacation => `
+        <div class="border border-gray-200 rounded-lg p-4">
+          <div class="flex justify-between items-start">
+            <div>
+              <h4 class="font-semibold text-gray-800">${escapeHTML(vacation.requester_name)}</h4>
+              <p class="text-xs text-gray-500">${escapeHTML(vacation.requester_email)}</p>
+              ${vacation.requester_username ? `<p class="text-xs text-gray-400">@${escapeHTML(vacation.requester_username)}</p>` : ''}
+            </div>
+            <span class="text-xs bg-yellow-100 text-yellow-700 px-2 py-1 rounded">대기중</span>
+          </div>
+          <div class="mt-3 text-sm text-gray-700">
+            <i class="fas fa-calendar-alt mr-2 text-blue-500"></i>${formatDate(vacation.start_date)} ~ ${formatDate(vacation.end_date)}
+          </div>
+          ${vacation.reason ? `<p class="mt-2 text-xs text-gray-500"><i class="fas fa-sticky-note mr-1"></i>${escapeHTML(vacation.reason)}</p>` : ''}
+          <div class="mt-4 flex space-x-2">
+            <button onclick="handleVacationDecision(${vacation.id}, 'approved')"
+              class="flex-1 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm">
+              <i class="fas fa-check mr-1"></i>승인
+            </button>
+            <button onclick="handleVacationDecision(${vacation.id}, 'rejected')"
+              class="flex-1 px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm">
+              <i class="fas fa-times mr-1"></i>거절
+            </button>
+          </div>
+        </div>
+      `).join('')
+      : '<p class="text-sm text-gray-500 text-center py-4">대기중인 휴가 신청이 없습니다.</p>';
+
     const researchersHTML = researchers.map(researcher => `
       <div class="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow cursor-pointer"
            onclick="showResearcherDetail(${researcher.id})">
         <div class="flex justify-between items-start">
           <div>
-            <h3 class="font-semibold text-gray-800">${researcher.name}</h3>
-            <p class="text-sm text-gray-600">${researcher.email}</p>
-            <p class="text-xs text-gray-400 mt-1">가입일: ${new Date(researcher.created_at).toLocaleDateString('ko-KR')}</p>
+            <h3 class="font-semibold text-gray-800">${escapeHTML(researcher.name)}</h3>
+            <p class="text-sm text-gray-600">${escapeHTML(researcher.email)}</p>
+            <p class="text-xs text-gray-400 mt-1">가입일: ${formatDate(researcher.created_at)}</p>
           </div>
           <i class="fas fa-chevron-right text-gray-400"></i>
         </div>
@@ -1592,18 +2012,49 @@ async function showAdminDashboard() {
     `).join('');
     
     document.getElementById('content-area').innerHTML = `
-      <div>
-        <h2 class="text-xl font-bold text-gray-800 mb-6">
-          <i class="fas fa-users-cog mr-2"></i>관리자 대시보드
-        </h2>
-        
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          ${researchersHTML}
-        </div>
+      <div class="space-y-6">
+        <section class="bg-white rounded-lg shadow-sm p-6">
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="text-lg font-semibold text-gray-800">
+              <i class="fas fa-umbrella-beach mr-2 text-blue-500"></i>대기중인 휴가 신청
+            </h2>
+            <button onclick="showAdminDashboard()" class="text-xs text-gray-500 hover:text-gray-700">
+              <i class="fas fa-sync-alt mr-1"></i>새로고침
+            </button>
+          </div>
+          <div class="grid gap-4 md:grid-cols-2">
+            ${vacationCards}
+          </div>
+        </section>
+
+        <section>
+          <h2 class="text-xl font-bold text-gray-800 mb-4">
+            <i class="fas fa-users-cog mr-2"></i>연구원 목록
+          </h2>
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            ${researchersHTML}
+          </div>
+        </section>
       </div>
     `;
   } catch (error) {
     console.error('Admin dashboard error:', error);
+  }
+}
+
+async function handleVacationDecision(vacationId, decision) {
+  let reason = '';
+  if (decision === 'rejected') {
+    reason = prompt('거절 사유를 입력하세요. (선택 입력)') || '';
+  }
+
+  try {
+    await api.post(`/admin/vacations/${vacationId}/decision`, { decision, reason });
+    alert(decision === 'approved' ? '휴가 신청을 승인했습니다.' : '휴가 신청을 거절했습니다.');
+    showAdminDashboard();
+  } catch (error) {
+    console.error('Vacation decision error:', error);
+    alert(error.response?.data?.error || '휴가 신청 처리에 실패했습니다.');
   }
 }
 
@@ -1645,6 +2096,39 @@ async function showResearcherDetail(researcherId) {
         </div>
       </div>
     `).join('') || '<p class="text-sm text-gray-500 text-center py-4">평가 기록 없음</p>';
+
+    const notesList = data.notes || [];
+    const notesSectionHTML = notesList.length
+      ? notesList.map(note => {
+          const safeTitle = escapeHTML(note.title);
+          const safeContent = escapeHTML(note.content || '');
+          const createdAt = formatDateTime(note.created_at);
+          const driveLink = note.gdrive_url ? escapeHTML(note.gdrive_url) : '';
+          const tagBadges = note.tags
+            ? note.tags.split(',').map(tag => `<span class="inline-block px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded mr-1">#${escapeHTML(tag.trim())}</span>`).join('')
+            : '';
+
+          return `
+            <div class="border border-gray-200 rounded-lg p-4">
+              <div class="flex justify-between items-start">
+                <div>
+                  <h4 class="font-semibold text-gray-800">${safeTitle}</h4>
+                  <p class="text-xs text-gray-400">${createdAt}</p>
+                  ${tagBadges ? `<div class="mt-2">${tagBadges}</div>` : ''}
+                </div>
+                <button class="text-sm text-blue-600 hover:text-blue-800" onclick="toggleNoteComments(${note.id})">
+                  <i class="fas fa-comments mr-1"></i>코멘트 관리
+                </button>
+              </div>
+              ${note.gdrive_url ? `<a href="${driveLink}" target="_blank" class="text-xs text-blue-600 hover:underline mt-2 inline-flex items-center">
+                <i class="fab fa-google-drive mr-1"></i>관련 자료 보기
+              </a>` : ''}
+              <p class="mt-3 text-sm text-gray-600 whitespace-pre-line">${safeContent}</p>
+              <div id="note-comments-${note.id}" class="mt-3 hidden"></div>
+            </div>
+          `;
+        }).join('')
+      : '<p class="text-sm text-gray-500 text-center py-4">등록된 연구노트가 없습니다.</p>';
     
     document.getElementById('content-area').innerHTML = `
       <div>
@@ -1685,43 +2169,17 @@ async function showResearcherDetail(researcherId) {
           </div>
         </div>
         
-        <!-- 코멘트 작성 -->
+        <!-- 연구노트 및 코멘트 관리 -->
         <div class="bg-white rounded-lg shadow-sm p-6">
-          <h3 class="font-semibold text-gray-800 mb-4">코멘트 작성</h3>
-          <textarea id="comment-text" rows="3" 
-            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-            placeholder="연구원에게 전달할 코멘트를 입력하세요..."></textarea>
-          <button onclick="saveComment(${researcher.id})" 
-            class="mt-3 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-            <i class="fas fa-comment mr-2"></i>코멘트 전송
-          </button>
+          <h3 class="font-semibold text-gray-800 mb-4">연구노트 및 코멘트 관리</h3>
+          <div class="space-y-4">
+            ${notesSectionHTML}
+          </div>
         </div>
       </div>
     `;
   } catch (error) {
     console.error('Researcher detail error:', error);
-  }
-}
-
-// 코멘트 저장
-async function saveComment(userId) {
-  const comment_text = document.getElementById('comment-text').value;
-  
-  if (!comment_text) {
-    alert('코멘트 내용을 입력해주세요.');
-    return;
-  }
-  
-  try {
-    await api.post('/comments', {
-      user_id: userId,
-      comment_text
-    });
-    alert('코멘트가 전송되었습니다.');
-    document.getElementById('comment-text').value = '';
-  } catch (error) {
-    console.error('Save comment error:', error);
-    alert('코멘트 전송에 실패했습니다.');
   }
 }
 

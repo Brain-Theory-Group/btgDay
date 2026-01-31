@@ -1,8 +1,8 @@
 -- 테스트 사용자 생성 (비밀번호: password123)
-INSERT OR IGNORE INTO users (email, name, password, role) VALUES 
-  ('researcher1@example.com', '김연구', 'password123', 'researcher'),
-  ('researcher2@example.com', '이과학', 'password123', 'researcher'),
-  ('admin@example.com', '박지도교수', 'password123', 'admin');
+INSERT OR IGNORE INTO users (email, username, recovery_email, name, password, role) VALUES 
+  ('researcher1@example.com', 'researcher1', 'researcher1@example.com', '김연구', 'password123', 'researcher'),
+  ('researcher2@example.com', 'researcher2', 'researcher2@example.com', '이과학', 'password123', 'researcher'),
+  ('admin@example.com', 'admin', 'admin@example.com', '박지도교수', 'password123', 'admin');
 
 -- 샘플 연구노트 (태그 포함)
 INSERT OR IGNORE INTO research_notes (user_id, title, content, tags) VALUES 

@@ -3,9 +3,117 @@ import { cors } from 'hono/cors'
 
 type Bindings = {
   DB: D1Database;
+  RESEND_API_KEY?: string;
+  RESEND_FROM_EMAIL?: string;
+  APP_BASE_URL?: string;
 }
 
 const app = new Hono<{ Bindings: Bindings }>()
+
+const findUserByIdentifier = async (db: D1Database, identifier: string) => {
+  const normalized = identifier.trim().toLowerCase()
+  if (!normalized) {
+    return null
+  }
+
+  return db.prepare(
+    `SELECT id, email, username, name, role, password, recovery_email 
+     FROM users 
+     WHERE LOWER(email) = ? OR LOWER(username) = ?`
+  ).bind(normalized, normalized).first()
+}
+
+const sendPasswordResetEmail = async (
+  env: Bindings,
+  requestUrl: string,
+  recipientEmail: string,
+  token: string,
+  username?: string | null
+) => {
+  const url = new URL(requestUrl)
+  const baseUrl = env.APP_BASE_URL || `${url.protocol}//${url.host}`
+  const resetUrl = `${baseUrl}/?resetToken=${token}`
+
+  if (env.RESEND_API_KEY && env.RESEND_FROM_EMAIL) {
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${env.RESEND_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        from: env.RESEND_FROM_EMAIL,
+        to: recipientEmail,
+        subject: '연구노트 관리 시스템 비밀번호 재설정',
+        html: `
+          <p>안녕하세요${username ? ` ${username}` : ''}.</p>
+          <p>비밀번호 재설정을 요청하셨다면 아래 버튼을 클릭하거나 URL을 브라우저에 붙여 넣어주세요.</p>
+          <p><a href="${resetUrl}" target="_blank" rel="noopener">비밀번호 재설정하기</a></p>
+          <p>또는 다음 링크를 복사해주세요:</p>
+          <p>${resetUrl}</p>
+          <p>이 링크는 60분 동안 유효합니다. 본인이 요청하지 않았다면 이 메일을 무시하셔도 됩니다.</p>
+        `
+      })
+    })
+
+    if (!response.ok) {
+      console.error('비밀번호 재설정 이메일 전송 실패:', await response.text())
+      return { emailed: false, resetUrl }
+    }
+
+    return { emailed: true, resetUrl }
+  }
+
+  console.warn('RESEND_API_KEY 또는 RESEND_FROM_EMAIL이 설정되지 않아 이메일을 전송하지 못했습니다.')
+  return { emailed: false, resetUrl }
+}
+
+const getUserContext = async (db: D1Database, userId: number) => {
+  if (!userId) return null
+  return db.prepare(
+    'SELECT id, email, username, name, role FROM users WHERE id = ?'
+  ).bind(userId).first()
+}
+
+const isAdminUser = async (db: D1Database, userId: number) => {
+  const record = await db.prepare('SELECT role FROM users WHERE id = ?').bind(userId).first()
+  return record?.role === 'admin'
+}
+
+const hydrateCommentThreads = async (db: D1Database, comments: any[]) => {
+  if (!comments || comments.length === 0) {
+    return []
+  }
+
+  const commentIds = comments.map((comment) => comment.id).filter(Boolean)
+
+  if (commentIds.length === 0) {
+    return comments.map((comment) => ({ ...comment, replies: [] }))
+  }
+
+  const placeholders = commentIds.map(() => '?').join(', ')
+  const repliesStatement = db.prepare(
+    `SELECT cr.*, u.name as author_name, u.username as author_username, u.email as author_email
+     FROM comment_replies cr
+     JOIN users u ON cr.user_id = u.id
+     WHERE cr.comment_id IN (${placeholders})
+     ORDER BY cr.created_at ASC`
+  )
+
+  const replyResults = await repliesStatement.bind(...commentIds).all()
+  const repliesMap = new Map<number, any[]>()
+
+  for (const reply of replyResults.results) {
+    const list = repliesMap.get(reply.comment_id) || []
+    list.push(reply)
+    repliesMap.set(reply.comment_id, list)
+  }
+
+  return comments.map((comment) => ({
+    ...comment,
+    replies: repliesMap.get(comment.id) || []
+  }))
+}
 
 // CORS 설정
 app.use('/api/*', cors())
@@ -16,50 +124,82 @@ app.use('/api/*', cors())
 
 // 로그인
 app.post('/api/login', async (c) => {
-  const { email, password } = await c.req.json()
-  
-  const user = await c.env.DB.prepare(
-    'SELECT id, email, name, role FROM users WHERE email = ? AND password = ?'
-  ).bind(email, password).first()
-  
-  if (!user) {
-    return c.json({ error: '이메일 또는 비밀번호가 잘못되었습니다.' }, 401)
+  const { identifier, password } = await c.req.json()
+
+  if (!identifier || !password) {
+    return c.json({ error: '아이디(또는 이메일)와 비밀번호를 모두 입력해주세요.' }, 400)
   }
-  
+
+  const user = await findUserByIdentifier(c.env.DB, identifier)
+
+  if (!user || (user as any).password !== password) {
+    return c.json({ error: '아이디(또는 이메일) 또는 비밀번호가 잘못되었습니다.' }, 401)
+  }
+
+  const record = user as any
+
   // 세션 토큰 생성
   const token = crypto.randomUUID()
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7일
-  
+
   await c.env.DB.prepare(
     'INSERT INTO sessions (user_id, token, expires_at) VALUES (?, ?, ?)'
-  ).bind(user.id, token, expiresAt.toISOString()).run()
-  
-  return c.json({ 
-    token, 
+  ).bind(record.id, token, expiresAt.toISOString()).run()
+
+  return c.json({
+    token,
     user: {
-      id: user.id,
-      email: user.email,
-      name: user.name,
-      role: user.role
+      id: record.id,
+      email: record.email,
+      username: record.username,
+      name: record.name,
+      role: record.role
     }
   })
 })
 
 // 회원가입
 app.post('/api/register', async (c) => {
-  const { email, password, name } = await c.req.json()
+  const { email, password, name, username, recoveryEmail } = await c.req.json()
+
+  if (!email || !password || !name) {
+    return c.json({ error: '이름, 이메일, 비밀번호를 모두 입력해주세요.' }, 400)
+  }
+
+  const trimmedEmail = (email as string).trim()
+  const defaultUsername = trimmedEmail.includes('@')
+    ? trimmedEmail.split('@')[0]
+    : trimmedEmail
+  const finalUsername = ((username || defaultUsername) as string).trim()
+  const finalRecoveryEmail = ((recoveryEmail || trimmedEmail) as string).trim()
+
+  if (!finalUsername) {
+    return c.json({ error: '아이디를 입력해주세요.' }, 400)
+  }
+
+  const normalizedEmail = trimmedEmail.toLowerCase()
+  const normalizedUsername = finalUsername.toLowerCase()
+
+  const existing = await c.env.DB.prepare(
+    'SELECT id FROM users WHERE LOWER(email) = ? OR LOWER(username) = ?'
+  ).bind(normalizedEmail, normalizedUsername).first()
+
+  if (existing) {
+    return c.json({ error: '이미 사용 중인 이메일 또는 아이디입니다.' }, 400)
+  }
   
   try {
     const result = await c.env.DB.prepare(
-      'INSERT INTO users (email, password, name) VALUES (?, ?, ?)'
-    ).bind(email, password, name).run()
+      'INSERT INTO users (email, username, recovery_email, password, name) VALUES (?, ?, ?, ?, ?)'
+    ).bind(trimmedEmail, finalUsername, finalRecoveryEmail || null, password, name).run()
     
     return c.json({ 
       success: true, 
       userId: result.meta.last_row_id 
     })
   } catch (error) {
-    return c.json({ error: '이미 존재하는 이메일입니다.' }, 400)
+    console.error('회원가입 오류:', error)
+    return c.json({ error: '회원가입 처리 중 오류가 발생했습니다.' }, 500)
   }
 })
 
@@ -71,6 +211,105 @@ app.post('/api/logout', async (c) => {
     await c.env.DB.prepare('DELETE FROM sessions WHERE token = ?').bind(token).run()
   }
   
+  return c.json({ success: true })
+})
+
+// 비밀번호 재설정 요청
+app.post('/api/password-reset/request', async (c) => {
+  const { identifier } = await c.req.json()
+  const normalized = (identifier || '').trim()
+
+  if (!normalized) {
+    return c.json({
+      success: true,
+      message: '해당 계정이 존재한다면 비밀번호 재설정 링크를 이메일로 전송했습니다.'
+    })
+  }
+
+  const user = await findUserByIdentifier(c.env.DB, normalized)
+
+  if (!user) {
+    return c.json({
+      success: true,
+      message: '해당 계정이 존재한다면 비밀번호 재설정 링크를 이메일로 전송했습니다.'
+    })
+  }
+
+  const record = user as any
+
+  await c.env.DB.prepare(
+    'UPDATE password_reset_tokens SET used = 1 WHERE user_id = ?'
+  ).bind(record.id).run()
+
+  const token = crypto.randomUUID().replace(/-/g, '')
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString() // 60분 유효
+
+  await c.env.DB.prepare(
+    'INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES (?, ?, ?)'
+  ).bind(record.id, token, expiresAt).run()
+
+  const { emailed, resetUrl } = await sendPasswordResetEmail(
+    c.env,
+    c.req.url,
+    record.recovery_email || record.email,
+    token,
+    record.username || record.name
+  )
+
+  if (!emailed) {
+    console.info('비밀번호 재설정 링크(테스트용):', resetUrl)
+  }
+  
+  return c.json({
+    success: true,
+    message: '해당 계정이 존재한다면 비밀번호 재설정 링크를 이메일로 전송했습니다.',
+    resetLink: emailed ? undefined : resetUrl
+  })
+})
+
+// 비밀번호 재설정 완료
+app.post('/api/password-reset/confirm', async (c) => {
+  const { token, newPassword } = await c.req.json()
+  const trimmedToken = (token || '').trim()
+  const trimmedPassword = (newPassword || '').trim()
+
+  if (!trimmedToken || !trimmedPassword) {
+    return c.json({ error: '토큰과 새 비밀번호를 모두 입력해주세요.' }, 400)
+  }
+
+  const resetRecord = await c.env.DB.prepare(
+    `SELECT prt.id, prt.user_id, prt.expires_at, prt.used, u.email, u.username 
+     FROM password_reset_tokens prt 
+     JOIN users u ON prt.user_id = u.id 
+     WHERE prt.token = ?`
+  ).bind(trimmedToken).first()
+
+  if (!resetRecord) {
+    return c.json({ error: '유효하지 않은 토큰입니다.' }, 400)
+  }
+
+  const record = resetRecord as any
+
+  if (record.used) {
+    return c.json({ error: '이미 사용된 토큰입니다.' }, 400)
+  }
+
+  if (new Date(record.expires_at as string) < new Date()) {
+    return c.json({ error: '토큰이 만료되었습니다. 다시 요청해주세요.' }, 400)
+  }
+
+  await c.env.DB.prepare('UPDATE users SET password = ? WHERE id = ?')
+    .bind(trimmedPassword, record.user_id)
+    .run()
+
+  await c.env.DB.prepare('UPDATE password_reset_tokens SET used = 1 WHERE id = ?')
+    .bind(record.id)
+    .run()
+
+  await c.env.DB.prepare('DELETE FROM sessions WHERE user_id = ?')
+    .bind(record.user_id)
+    .run()
+
   return c.json({ success: true })
 })
 
@@ -510,60 +749,117 @@ app.get('/api/calendar', authMiddleware, async (c) => {
 
 // ==================== 코멘트 API ====================
 
-// 코멘트 목록 조회 (연구원이 받은 코멘트)
+// 코멘트 목록 조회 (연구원이 받은 코멘트 + 관리자용 필터)
 app.get('/api/comments', authMiddleware, async (c) => {
-  const userId = c.get('userId')
-  
-  const comments = await c.env.DB.prepare(
-    `SELECT c.*, u.name as admin_name 
-     FROM comments c
-     LEFT JOIN users u ON c.admin_id = u.id
-     WHERE c.user_id = ? 
-     ORDER BY c.created_at DESC`
-  ).bind(userId).all()
-  
-  return c.json(comments.results)
+  const requesterId = Number(c.get('userId'))
+  const requester = await getUserContext(c.env.DB, requesterId)
+
+  if (!requester) {
+    return c.json({ error: '사용자 정보를 찾을 수 없습니다.' }, 404)
+  }
+
+  let filterUserId: number | null = null
+  if (requester.role === 'admin') {
+    const param = c.req.query('userId')
+    if (param) {
+      const parsed = Number(param)
+      if (Number.isNaN(parsed)) {
+        return c.json({ error: '잘못된 사용자 ID입니다.' }, 400)
+      }
+      filterUserId = parsed
+    }
+  } else {
+    filterUserId = requesterId
+  }
+
+  let query = `SELECT c.*, admin.name as admin_name, admin.email as admin_email,
+                      rn.title as note_title, rn.id as note_id
+               FROM comments c
+               LEFT JOIN users admin ON c.admin_id = admin.id
+               LEFT JOIN research_notes rn ON c.related_type = 'note' AND c.related_id = rn.id`
+  const bindings: any[] = []
+
+  if (filterUserId !== null) {
+    query += ' WHERE c.user_id = ?'
+    bindings.push(filterUserId)
+  }
+
+  query += ' ORDER BY c.created_at DESC'
+
+  let statement = c.env.DB.prepare(query)
+  if (bindings.length) {
+    statement = statement.bind(...bindings)
+  }
+
+  const results = await statement.all()
+  const enriched = await hydrateCommentThreads(c.env.DB, results.results)
+
+  return c.json(enriched)
 })
 
-// 코멘트 추가 (관리자만 가능)
+// 코멘트 추가 (관리자만 가능) - 연구노트 기준
 app.post('/api/comments', authMiddleware, async (c) => {
-  const adminId = c.get('userId')
-  const { user_id, comment_text, related_type, related_id } = await c.req.json()
-  
-  // 관리자 권한 확인
-  const admin = await c.env.DB.prepare(
-    'SELECT role FROM users WHERE id = ?'
-  ).bind(adminId).first()
-  
-  if (admin?.role !== 'admin') {
+  const adminId = Number(c.get('userId'))
+
+  if (!(await isAdminUser(c.env.DB, adminId))) {
     return c.json({ error: '관리자만 코멘트를 작성할 수 있습니다.' }, 403)
   }
-  
-  const result = await c.env.DB.prepare(
+
+  const { user_id, comment_text, related_id } = await c.req.json()
+  const trimmedText = (comment_text || '').trim()
+  const noteId = Number(related_id)
+
+  if (!noteId || !trimmedText) {
+    return c.json({ error: '연구노트와 코멘트 내용을 모두 입력해주세요.' }, 400)
+  }
+
+  const note = await c.env.DB.prepare(
+    'SELECT id, user_id, title FROM research_notes WHERE id = ?'
+  ).bind(noteId).first()
+
+  if (!note) {
+    return c.json({ error: '대상 연구노트를 찾을 수 없습니다.' }, 404)
+  }
+
+  const noteOwnerId = Number((note as any).user_id)
+  const targetUserId = user_id ? Number(user_id) : noteOwnerId
+
+  if (Number.isNaN(targetUserId) || targetUserId !== noteOwnerId) {
+    return c.json({ error: '코멘트 대상 연구원 정보가 올바르지 않습니다.' }, 400)
+  }
+
+  const insertResult = await c.env.DB.prepare(
     `INSERT INTO comments (user_id, admin_id, comment_text, related_type, related_id) 
-     VALUES (?, ?, ?, ?, ?)`
-  ).bind(user_id, adminId, comment_text, related_type || null, related_id || null).run()
-  
-  return c.json({ 
-    success: true, 
-    id: result.meta.last_row_id 
+     VALUES (?, ?, ?, 'note', ?)`
+  ).bind(targetUserId, adminId, trimmedText, noteId).run()
+
+  const inserted = await c.env.DB.prepare(
+    `SELECT c.*, admin.name as admin_name, admin.email as admin_email,
+            rn.title as note_title, rn.id as note_id
+     FROM comments c
+     LEFT JOIN users admin ON c.admin_id = admin.id
+     LEFT JOIN research_notes rn ON c.related_id = rn.id
+     WHERE c.id = ?`
+  ).bind(insertResult.meta.last_row_id).first()
+
+  return c.json({
+    success: true,
+    comment: {
+      ...inserted,
+      replies: []
+    }
   })
 })
 
 // 코멘트 삭제 (관리자만 가능)
 app.delete('/api/comments/:id', authMiddleware, async (c) => {
-  const adminId = c.get('userId')
-  const commentId = c.req.param('id')
-  
-  // 관리자 권한 확인
-  const admin = await c.env.DB.prepare(
-    'SELECT role FROM users WHERE id = ?'
-  ).bind(adminId).first()
-  
-  if (admin?.role !== 'admin') {
+  const adminId = Number(c.get('userId'))
+  const commentId = Number(c.req.param('id'))
+
+  if (!(await isAdminUser(c.env.DB, adminId))) {
     return c.json({ error: '관리자만 코멘트를 삭제할 수 있습니다.' }, 403)
   }
-  
+
   await c.env.DB.prepare(
     'DELETE FROM comments WHERE id = ? AND admin_id = ?'
   ).bind(commentId, adminId).run()
@@ -571,7 +867,162 @@ app.delete('/api/comments/:id', authMiddleware, async (c) => {
   return c.json({ success: true })
 })
 
+// 코멘트 답글 작성 (연구원/관리자)
+app.post('/api/comments/:id/replies', authMiddleware, async (c) => {
+  const userId = Number(c.get('userId'))
+  const commentId = Number(c.req.param('id'))
+  const { reply_text } = await c.req.json()
+  const trimmedText = (reply_text || '').trim()
+
+  if (!trimmedText) {
+    return c.json({ error: '답글 내용을 입력해주세요.' }, 400)
+  }
+
+  const user = await getUserContext(c.env.DB, userId)
+  if (!user) {
+    return c.json({ error: '사용자 정보를 찾을 수 없습니다.' }, 404)
+  }
+
+  const comment = await c.env.DB.prepare(
+    'SELECT id, user_id FROM comments WHERE id = ?'
+  ).bind(commentId).first()
+
+  if (!comment) {
+    return c.json({ error: '코멘트를 찾을 수 없습니다.' }, 404)
+  }
+
+  if (user.role !== 'admin' && (comment as any).user_id !== userId) {
+    return c.json({ error: '해당 코멘트에 답글을 작성할 권한이 없습니다.' }, 403)
+  }
+
+  const insertResult = await c.env.DB.prepare(
+    'INSERT INTO comment_replies (comment_id, user_id, role, reply_text) VALUES (?, ?, ?, ?)'
+  ).bind(commentId, userId, user.role || 'researcher', trimmedText).run()
+
+  const inserted = await c.env.DB.prepare(
+    `SELECT cr.*, u.name as author_name, u.username as author_username, u.email as author_email
+     FROM comment_replies cr
+     JOIN users u ON cr.user_id = u.id
+     WHERE cr.id = ?`
+  ).bind(insertResult.meta.last_row_id).first()
+
+  return c.json({ success: true, reply: inserted })
+})
+
+// 연구노트별 코멘트 조회
+app.get('/api/notes/:id/comments', authMiddleware, async (c) => {
+  const requesterId = Number(c.get('userId'))
+  const noteId = Number(c.req.param('id'))
+
+  const requester = await getUserContext(c.env.DB, requesterId)
+  if (!requester) {
+    return c.json({ error: '사용자 정보를 찾을 수 없습니다.' }, 404)
+  }
+
+  const note = await c.env.DB.prepare(
+    'SELECT id, user_id, title FROM research_notes WHERE id = ?'
+  ).bind(noteId).first()
+
+  if (!note) {
+    return c.json({ error: '연구노트를 찾을 수 없습니다.' }, 404)
+  }
+
+  const noteOwnerId = Number((note as any).user_id)
+  if (requester.role !== 'admin' && noteOwnerId !== requesterId) {
+    return c.json({ error: '해당 연구노트에 접근할 권한이 없습니다.' }, 403)
+  }
+
+  const comments = await c.env.DB.prepare(
+    `SELECT c.*, admin.name as admin_name, admin.email as admin_email,
+            rn.title as note_title, rn.id as note_id
+     FROM comments c
+     LEFT JOIN users admin ON c.admin_id = admin.id
+     LEFT JOIN research_notes rn ON c.related_id = rn.id
+     WHERE c.related_type = 'note' AND c.related_id = ?
+     ORDER BY c.created_at DESC`
+  ).bind(noteId).all()
+
+  const enriched = await hydrateCommentThreads(c.env.DB, comments.results)
+  return c.json(enriched)
+})
+
 // ==================== 관리자 API ====================
+
+// 휴가 신청 목록 (관리자용)
+app.get('/api/admin/vacations', authMiddleware, async (c) => {
+  const adminId = Number(c.get('userId'))
+
+  if (!(await isAdminUser(c.env.DB, adminId))) {
+    return c.json({ error: '관리자 권한이 필요합니다.' }, 403)
+  }
+
+  const statusParam = c.req.query('status')
+  const allowedStatuses = ['pending', 'approved', 'rejected']
+  let filterStatus: string | null = null
+
+  if (statusParam && statusParam !== 'all') {
+    if (!allowedStatuses.includes(statusParam)) {
+      return c.json({ error: '잘못된 상태 값입니다.' }, 400)
+    }
+    filterStatus = statusParam
+  }
+
+  let query = `SELECT vr.*, u.name as requester_name, u.email as requester_email, u.username as requester_username
+               FROM vacation_requests vr
+               JOIN users u ON vr.user_id = u.id`
+  const bindings: any[] = []
+
+  if (filterStatus) {
+    query += ' WHERE vr.status = ?'
+    bindings.push(filterStatus)
+  }
+
+  query += ' ORDER BY vr.created_at DESC'
+
+  let statement = c.env.DB.prepare(query)
+  if (bindings.length) {
+    statement = statement.bind(...bindings)
+  }
+
+  const results = await statement.all()
+  return c.json(results.results)
+})
+
+// 휴가 승인/거절 결정 (관리자용)
+app.post('/api/admin/vacations/:id/decision', authMiddleware, async (c) => {
+  const adminId = Number(c.get('userId'))
+  const vacationId = Number(c.req.param('id'))
+  const { decision, reason } = await c.req.json()
+
+  if (!(await isAdminUser(c.env.DB, adminId))) {
+    return c.json({ error: '관리자 권한이 필요합니다.' }, 403)
+  }
+
+  const normalizedDecision = (decision || '').toLowerCase()
+  if (!['approved', 'rejected'].includes(normalizedDecision)) {
+    return c.json({ error: '결정 값은 approved 또는 rejected 이어야 합니다.' }, 400)
+  }
+
+  const now = new Date().toISOString()
+  const updateResult = await c.env.DB.prepare(
+    `UPDATE vacation_requests
+     SET status = ?, approved_by = ?, approved_at = ?, decision_reason = ?
+     WHERE id = ? AND status = 'pending'`
+  ).bind(normalizedDecision, adminId, now, reason || null, vacationId).run()
+
+  if (updateResult.meta.changes === 0) {
+    return c.json({ error: '이미 처리된 신청이거나 존재하지 않는 신청입니다.' }, 409)
+  }
+
+  const updated = await c.env.DB.prepare(
+    `SELECT vr.*, u.name as requester_name, u.email as requester_email, u.username as requester_username
+     FROM vacation_requests vr
+     JOIN users u ON vr.user_id = u.id
+     WHERE vr.id = ?`
+  ).bind(vacationId).first()
+
+  return c.json({ success: true, vacation: updated })
+})
 
 // 관리자 대시보드 - 모든 연구원 목록
 app.get('/api/admin/researchers', authMiddleware, async (c) => {
@@ -634,13 +1085,22 @@ app.get('/api/admin/researcher/:id', authMiddleware, async (c) => {
   const evaluations = await c.env.DB.prepare(
     'SELECT * FROM self_evaluations WHERE user_id = ? ORDER BY evaluation_date DESC LIMIT 5'
   ).bind(researcherId).all()
+
+  const notes = await c.env.DB.prepare(
+    `SELECT id, title, content, tags, gdrive_url, created_at 
+     FROM research_notes 
+     WHERE user_id = ? 
+     ORDER BY created_at DESC 
+     LIMIT 20`
+  ).bind(researcherId).all()
   
   return c.json({
     researcher,
     notes_count: notesCount?.count || 0,
     recent_time: recentTime.results,
     vacations: vacations.results,
-    evaluations: evaluations.results
+    evaluations: evaluations.results,
+    notes: notes.results
   })
 })
 
