@@ -44,21 +44,34 @@
    - 이전/다음 달 이동
    - 색상별 이벤트 구분
 
-7. **세미나 관리**
+7. **세미나 관리 (개선!)**
    - 세미나 추가, 수정, 삭제
    - 날짜, 시간, 장소 기록
    - 설명 및 상세 정보
+   - **공유 세미나 기능** - 모든 사용자와 공유 가능
 
 8. **출장 관리**
    - 출장 추가, 수정, 삭제
    - 목적지, 목적, 기간 기록
    - 상태 관리 (예정/진행중/완료/취소)
 
-9. **대시보드**
-   - 연구노트 개수
-   - 오늘의 연구/공부 시간
-   - 대기중인 휴가 신청
-   - 최근 평가 평균
+9. **통계 탭 (NEW!)**
+   - 주간/월간 시간 통계
+   - 이번 주 vs 지난 주 비교
+   - 일별 상세 기록
+   - 시각적 통계 카드
+
+10. **관리자 기능 (NEW!)**
+    - 모든 연구원 목록 조회
+    - 연구원별 상세 통계
+    - 코멘트 작성 및 전송
+    - 휴가/평가 현황 확인
+
+11. **대시보드**
+    - 연구노트 개수
+    - 오늘의 연구/공부 시간
+    - 대기중인 휴가 신청
+    - 최근 평가 평균
 
 ## API 엔드포인트
 
@@ -90,8 +103,8 @@
 - `POST /api/evaluations` - 평가 작성 (evaluation_date, productivity_score, quality_score, collaboration_score, notes)
 
 ### 세미나
-- `GET /api/seminars` - 세미나 목록 조회
-- `POST /api/seminars` - 세미나 추가 (title, description, event_date, start_time, end_time, location)
+- `GET /api/seminars` - 세미나 목록 조회 (개인 + 공유 세미나)
+- `POST /api/seminars` - 세미나 추가 (title, description, event_date, start_time, end_time, location, is_shared)
 - `PUT /api/seminars/:id` - 세미나 수정
 - `DELETE /api/seminars/:id` - 세미나 삭제
 
@@ -103,6 +116,20 @@
 
 ### 캘린더
 - `GET /api/calendar?year=YYYY&month=MM` - 월별 통합 캘린더 데이터 조회
+
+### 통계
+- `GET /api/stats/weekly` - 주간 통계
+- `GET /api/stats/monthly` - 월간 통계
+- `GET /api/stats/summary` - 통계 요약 (이번 주, 지난 주, 이번 달)
+
+### 관리자 (admin 권한 필요)
+- `GET /api/admin/researchers` - 모든 연구원 목록
+- `GET /api/admin/researcher/:id` - 연구원 상세 정보
+
+### 코멘트 (관리자 → 연구원)
+- `GET /api/comments` - 받은 코멘트 목록
+- `POST /api/comments` - 코멘트 작성 (admin만)
+- `DELETE /api/comments/:id` - 코멘트 삭제 (admin만)
 
 ### 대시보드
 - `GET /api/dashboard` - 대시보드 통계
@@ -119,14 +146,17 @@
 
 ## 테스트 계정
 ```
+# 연구원 계정
 이메일: researcher1@example.com
 비밀번호: password123
 
 이메일: researcher2@example.com
 비밀번호: password123
 
+# 관리자 계정 (지도교수)
 이메일: admin@example.com
 비밀번호: password123
+이름: 박지도교수
 ```
 
 ## 로컬 개발 URL
