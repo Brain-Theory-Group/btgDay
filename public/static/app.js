@@ -1,0 +1,907 @@
+// 전역 상태
+let currentUser = null;
+let currentToken = null;
+let currentView = 'dashboard';
+
+// API 헬퍼
+const api = axios.create({
+  baseURL: '/api'
+});
+
+// 토큰을 헤더에 자동 추가
+api.interceptors.request.use(config => {
+  if (currentToken) {
+    config.headers.Authorization = `Bearer ${currentToken}`;
+  }
+  return config;
+});
+
+// 인증 확인
+function checkAuth() {
+  const token = localStorage.getItem('token');
+  const user = localStorage.getItem('user');
+  
+  if (token && user) {
+    currentToken = token;
+    currentUser = JSON.parse(user);
+    showDashboard();
+  } else {
+    showLogin();
+  }
+}
+
+// 로그인 화면
+function showLogin() {
+  document.getElementById('app').innerHTML = `
+    <div class="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-500 to-purple-600">
+      <div class="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-md">
+        <h1 class="text-3xl font-bold text-center mb-8 text-gray-800">
+          <i class="fas fa-flask mr-2"></i>연구노트 관리
+        </h1>
+        
+        <div id="login-form">
+          <div class="mb-4">
+            <label class="block text-sm font-medium text-gray-700 mb-2">이메일</label>
+            <input type="email" id="login-email" 
+              class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              placeholder="researcher@example.com">
+          </div>
+          
+          <div class="mb-6">
+            <label class="block text-sm font-medium text-gray-700 mb-2">비밀번호</label>
+            <input type="password" id="login-password" 
+              class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              placeholder="••••••••">
+          </div>
+          
+          <button onclick="handleLogin()" 
+            class="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors mb-4">
+            <i class="fas fa-sign-in-alt mr-2"></i>로그인
+          </button>
+          
+          <button onclick="showRegister()" 
+            class="w-full bg-gray-200 text-gray-700 py-3 rounded-lg font-semibold hover:bg-gray-300 transition-colors">
+            <i class="fas fa-user-plus mr-2"></i>회원가입
+          </button>
+        </div>
+        
+        <div id="error-message" class="mt-4 text-red-600 text-sm text-center hidden"></div>
+        
+        <div class="mt-6 p-4 bg-blue-50 rounded-lg">
+          <p class="text-sm text-gray-600 text-center mb-2">테스트 계정:</p>
+          <p class="text-xs text-gray-500 text-center">researcher1@example.com / password123</p>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// 회원가입 화면
+function showRegister() {
+  document.getElementById('app').innerHTML = `
+    <div class="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-500 to-purple-600">
+      <div class="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-md">
+        <h1 class="text-3xl font-bold text-center mb-8 text-gray-800">
+          <i class="fas fa-user-plus mr-2"></i>회원가입
+        </h1>
+        
+        <div id="register-form">
+          <div class="mb-4">
+            <label class="block text-sm font-medium text-gray-700 mb-2">이름</label>
+            <input type="text" id="register-name" 
+              class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              placeholder="홍길동">
+          </div>
+          
+          <div class="mb-4">
+            <label class="block text-sm font-medium text-gray-700 mb-2">이메일</label>
+            <input type="email" id="register-email" 
+              class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              placeholder="researcher@example.com">
+          </div>
+          
+          <div class="mb-6">
+            <label class="block text-sm font-medium text-gray-700 mb-2">비밀번호</label>
+            <input type="password" id="register-password" 
+              class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              placeholder="••••••••">
+          </div>
+          
+          <button onclick="handleRegister()" 
+            class="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors mb-4">
+            <i class="fas fa-check mr-2"></i>가입하기
+          </button>
+          
+          <button onclick="showLogin()" 
+            class="w-full bg-gray-200 text-gray-700 py-3 rounded-lg font-semibold hover:bg-gray-300 transition-colors">
+            <i class="fas fa-arrow-left mr-2"></i>로그인으로 돌아가기
+          </button>
+        </div>
+        
+        <div id="error-message" class="mt-4 text-red-600 text-sm text-center hidden"></div>
+      </div>
+    </div>
+  `;
+}
+
+// 로그인 처리
+async function handleLogin() {
+  const email = document.getElementById('login-email').value;
+  const password = document.getElementById('login-password').value;
+  
+  try {
+    const response = await api.post('/login', { email, password });
+    currentToken = response.data.token;
+    currentUser = response.data.user;
+    
+    localStorage.setItem('token', currentToken);
+    localStorage.setItem('user', JSON.stringify(currentUser));
+    
+    showDashboard();
+  } catch (error) {
+    showError(error.response?.data?.error || '로그인에 실패했습니다.');
+  }
+}
+
+// 회원가입 처리
+async function handleRegister() {
+  const name = document.getElementById('register-name').value;
+  const email = document.getElementById('register-email').value;
+  const password = document.getElementById('register-password').value;
+  
+  try {
+    await api.post('/register', { email, password, name });
+    alert('회원가입이 완료되었습니다. 로그인해주세요.');
+    showLogin();
+  } catch (error) {
+    showError(error.response?.data?.error || '회원가입에 실패했습니다.');
+  }
+}
+
+// 로그아웃
+async function handleLogout() {
+  await api.post('/logout');
+  localStorage.removeItem('token');
+  localStorage.removeItem('user');
+  currentToken = null;
+  currentUser = null;
+  showLogin();
+}
+
+// 에러 표시
+function showError(message) {
+  const errorDiv = document.getElementById('error-message');
+  errorDiv.textContent = message;
+  errorDiv.classList.remove('hidden');
+  setTimeout(() => errorDiv.classList.add('hidden'), 3000);
+}
+
+// 대시보드 표시
+async function showDashboard() {
+  currentView = 'dashboard';
+  
+  try {
+    const dashboard = await api.get('/dashboard');
+    const stats = dashboard.data;
+    
+    document.getElementById('app').innerHTML = `
+      <div class="min-h-screen bg-gray-50">
+        <!-- 상단 네비게이션 -->
+        <nav class="bg-white shadow-sm">
+          <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+              <div class="flex items-center">
+                <h1 class="text-xl font-bold text-gray-800">
+                  <i class="fas fa-flask mr-2 text-blue-600"></i>연구노트 관리
+                </h1>
+              </div>
+              <div class="flex items-center space-x-4">
+                <span class="text-sm text-gray-600">
+                  <i class="fas fa-user mr-1"></i>${currentUser.name}
+                </span>
+                <button onclick="handleLogout()" 
+                  class="text-sm text-gray-600 hover:text-gray-800">
+                  <i class="fas fa-sign-out-alt mr-1"></i>로그아웃
+                </button>
+              </div>
+            </div>
+          </div>
+        </nav>
+
+        <!-- 메인 컨텐츠 -->
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          <!-- 통계 카드 -->
+          <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+            <div class="bg-white p-6 rounded-lg shadow-sm">
+              <div class="flex items-center justify-between">
+                <div>
+                  <p class="text-sm text-gray-600">연구노트</p>
+                  <p class="text-2xl font-bold text-gray-800">${stats.notes_count}</p>
+                </div>
+                <i class="fas fa-book text-3xl text-blue-500"></i>
+              </div>
+            </div>
+            
+            <div class="bg-white p-6 rounded-lg shadow-sm">
+              <div class="flex items-center justify-between">
+                <div>
+                  <p class="text-sm text-gray-600">오늘 연구시간</p>
+                  <p class="text-2xl font-bold text-gray-800">
+                    ${stats.today_time.find(t => t.record_type === 'research')?.total || 0}분
+                  </p>
+                </div>
+                <i class="fas fa-flask text-3xl text-green-500"></i>
+              </div>
+            </div>
+            
+            <div class="bg-white p-6 rounded-lg shadow-sm">
+              <div class="flex items-center justify-between">
+                <div>
+                  <p class="text-sm text-gray-600">오늘 공부시간</p>
+                  <p class="text-2xl font-bold text-gray-800">
+                    ${stats.today_time.find(t => t.record_type === 'study')?.total || 0}분
+                  </p>
+                </div>
+                <i class="fas fa-graduation-cap text-3xl text-purple-500"></i>
+              </div>
+            </div>
+            
+            <div class="bg-white p-6 rounded-lg shadow-sm">
+              <div class="flex items-center justify-between">
+                <div>
+                  <p class="text-sm text-gray-600">대기중인 휴가</p>
+                  <p class="text-2xl font-bold text-gray-800">${stats.pending_vacations}</p>
+                </div>
+                <i class="fas fa-umbrella-beach text-3xl text-orange-500"></i>
+              </div>
+            </div>
+          </div>
+
+          <!-- 네비게이션 탭 -->
+          <div class="bg-white rounded-lg shadow-sm mb-6">
+            <div class="border-b border-gray-200">
+              <nav class="flex -mb-px">
+                <button onclick="showNotes()" 
+                  class="px-6 py-4 text-sm font-medium text-gray-600 hover:text-blue-600 hover:border-blue-600 border-b-2 border-transparent">
+                  <i class="fas fa-book mr-2"></i>연구노트
+                </button>
+                <button onclick="showTimeRecords()" 
+                  class="px-6 py-4 text-sm font-medium text-gray-600 hover:text-blue-600 hover:border-blue-600 border-b-2 border-transparent">
+                  <i class="fas fa-clock mr-2"></i>시간 기록
+                </button>
+                <button onclick="showVacations()" 
+                  class="px-6 py-4 text-sm font-medium text-gray-600 hover:text-blue-600 hover:border-blue-600 border-b-2 border-transparent">
+                  <i class="fas fa-umbrella-beach mr-2"></i>휴가 신청
+                </button>
+                <button onclick="showEvaluations()" 
+                  class="px-6 py-4 text-sm font-medium text-gray-600 hover:text-blue-600 hover:border-blue-600 border-b-2 border-transparent">
+                  <i class="fas fa-star mr-2"></i>셀프 평가
+                </button>
+              </nav>
+            </div>
+          </div>
+
+          <!-- 컨텐츠 영역 -->
+          <div id="content-area" class="bg-white rounded-lg shadow-sm p-6">
+            <div class="text-center text-gray-500 py-12">
+              <i class="fas fa-hand-pointer text-4xl mb-4"></i>
+              <p>위 탭을 선택하여 시작하세요</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  } catch (error) {
+    console.error('Dashboard error:', error);
+    handleLogout();
+  }
+}
+
+// 연구노트 화면
+async function showNotes() {
+  currentView = 'notes';
+  
+  try {
+    const response = await api.get('/notes');
+    const notes = response.data;
+    
+    let notesHTML = notes.map(note => `
+      <div class="border-b border-gray-200 py-4 last:border-0">
+        <div class="flex justify-between items-start">
+          <div class="flex-1">
+            <h3 class="font-semibold text-gray-800 mb-1">${note.title}</h3>
+            <p class="text-sm text-gray-600 mb-2 line-clamp-2">${note.content}</p>
+            ${note.gdrive_url ? `<a href="${note.gdrive_url}" target="_blank" class="text-xs text-blue-600 hover:underline">
+              <i class="fab fa-google-drive mr-1"></i>Google Drive에서 보기
+            </a>` : ''}
+            <p class="text-xs text-gray-400 mt-1">${new Date(note.created_at).toLocaleString('ko-KR')}</p>
+          </div>
+          <div class="flex space-x-2 ml-4">
+            <button onclick="editNote(${note.id})" 
+              class="text-blue-600 hover:text-blue-800">
+              <i class="fas fa-edit"></i>
+            </button>
+            <button onclick="deleteNote(${note.id})" 
+              class="text-red-600 hover:text-red-800">
+              <i class="fas fa-trash"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    `).join('');
+    
+    if (notes.length === 0) {
+      notesHTML = '<p class="text-center text-gray-500 py-8">아직 작성한 연구노트가 없습니다.</p>';
+    }
+    
+    document.getElementById('content-area').innerHTML = `
+      <div class="flex justify-between items-center mb-6">
+        <h2 class="text-xl font-bold text-gray-800">
+          <i class="fas fa-book mr-2"></i>연구노트
+        </h2>
+        <button onclick="showNoteForm()" 
+          class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
+          <i class="fas fa-plus mr-2"></i>새 노트 작성
+        </button>
+      </div>
+      
+      <div id="notes-list">
+        ${notesHTML}
+      </div>
+    `;
+  } catch (error) {
+    console.error('Notes error:', error);
+  }
+}
+
+// 노트 작성 폼
+function showNoteForm(noteId = null) {
+  document.getElementById('content-area').innerHTML = `
+    <div class="max-w-2xl mx-auto">
+      <h2 class="text-xl font-bold text-gray-800 mb-6">
+        <i class="fas fa-edit mr-2"></i>${noteId ? '노트 수정' : '새 노트 작성'}
+      </h2>
+      
+      <div class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">제목</label>
+          <input type="text" id="note-title" 
+            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+            placeholder="연구노트 제목">
+        </div>
+        
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">내용</label>
+          <textarea id="note-content" rows="10"
+            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+            placeholder="연구 내용을 작성하세요..."></textarea>
+        </div>
+        
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">Google Drive URL (선택)</label>
+          <input type="url" id="note-gdrive" 
+            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+            placeholder="https://drive.google.com/...">
+          <p class="text-xs text-gray-500 mt-1">
+            <i class="fas fa-info-circle mr-1"></i>
+            Google Drive에 업로드한 파일의 공유 링크를 입력하세요
+          </p>
+        </div>
+        
+        <div class="flex space-x-4">
+          <button onclick="saveNote(${noteId})" 
+            class="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700">
+            <i class="fas fa-save mr-2"></i>저장
+          </button>
+          <button onclick="showNotes()" 
+            class="flex-1 bg-gray-200 text-gray-700 py-2 rounded-lg hover:bg-gray-300">
+            <i class="fas fa-times mr-2"></i>취소
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  if (noteId) {
+    loadNoteData(noteId);
+  }
+}
+
+// 노트 데이터 로드
+async function loadNoteData(noteId) {
+  try {
+    const response = await api.get(`/notes/${noteId}`);
+    const note = response.data;
+    
+    document.getElementById('note-title').value = note.title;
+    document.getElementById('note-content').value = note.content;
+    document.getElementById('note-gdrive').value = note.gdrive_url || '';
+  } catch (error) {
+    console.error('Load note error:', error);
+  }
+}
+
+// 노트 저장
+async function saveNote(noteId) {
+  const title = document.getElementById('note-title').value;
+  const content = document.getElementById('note-content').value;
+  const gdrive_url = document.getElementById('note-gdrive').value;
+  
+  if (!title || !content) {
+    alert('제목과 내용을 입력해주세요.');
+    return;
+  }
+  
+  try {
+    if (noteId) {
+      await api.put(`/notes/${noteId}`, { title, content, gdrive_url });
+    } else {
+      await api.post('/notes', { title, content, gdrive_url });
+    }
+    showNotes();
+  } catch (error) {
+    console.error('Save note error:', error);
+    alert('저장에 실패했습니다.');
+  }
+}
+
+// 노트 수정
+function editNote(noteId) {
+  showNoteForm(noteId);
+}
+
+// 노트 삭제
+async function deleteNote(noteId) {
+  if (!confirm('정말 삭제하시겠습니까?')) return;
+  
+  try {
+    await api.delete(`/notes/${noteId}`);
+    showNotes();
+  } catch (error) {
+    console.error('Delete note error:', error);
+  }
+}
+
+// 시간 기록 화면
+async function showTimeRecords() {
+  currentView = 'time';
+  
+  const today = new Date().toISOString().split('T')[0];
+  
+  try {
+    const response = await api.get(`/time-records?date=${today}`);
+    const records = response.data;
+    
+    let recordsHTML = records.map(record => `
+      <div class="flex justify-between items-center border-b border-gray-200 py-3 last:border-0">
+        <div>
+          <span class="inline-block px-3 py-1 rounded-full text-sm font-medium ${
+            record.record_type === 'research' ? 'bg-green-100 text-green-800' : 'bg-purple-100 text-purple-800'
+          }">
+            <i class="fas ${record.record_type === 'research' ? 'fa-flask' : 'fa-graduation-cap'} mr-1"></i>
+            ${record.record_type === 'research' ? '연구' : '공부'}
+          </span>
+          <span class="ml-3 text-gray-800 font-semibold">${record.duration_minutes}분</span>
+          ${record.description ? `<p class="text-sm text-gray-600 mt-1">${record.description}</p>` : ''}
+        </div>
+        <button onclick="deleteTimeRecord(${record.id})" 
+          class="text-red-600 hover:text-red-800">
+          <i class="fas fa-trash"></i>
+        </button>
+      </div>
+    `).join('');
+    
+    if (records.length === 0) {
+      recordsHTML = '<p class="text-center text-gray-500 py-8">오늘 기록된 시간이 없습니다.</p>';
+    }
+    
+    document.getElementById('content-area').innerHTML = `
+      <div class="flex justify-between items-center mb-6">
+        <h2 class="text-xl font-bold text-gray-800">
+          <i class="fas fa-clock mr-2"></i>시간 기록 (${today})
+        </h2>
+        <button onclick="showTimeRecordForm()" 
+          class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
+          <i class="fas fa-plus mr-2"></i>시간 추가
+        </button>
+      </div>
+      
+      <div id="records-list">
+        ${recordsHTML}
+      </div>
+    `;
+  } catch (error) {
+    console.error('Time records error:', error);
+  }
+}
+
+// 시간 기록 폼
+function showTimeRecordForm() {
+  const today = new Date().toISOString().split('T')[0];
+  
+  document.getElementById('content-area').innerHTML = `
+    <div class="max-w-2xl mx-auto">
+      <h2 class="text-xl font-bold text-gray-800 mb-6">
+        <i class="fas fa-plus mr-2"></i>시간 기록 추가
+      </h2>
+      
+      <div class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">활동 유형</label>
+          <select id="record-type" 
+            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+            <option value="research">연구</option>
+            <option value="study">공부</option>
+          </select>
+        </div>
+        
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">시간 (분)</label>
+          <input type="number" id="record-duration" min="1"
+            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+            placeholder="60">
+        </div>
+        
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">설명 (선택)</label>
+          <textarea id="record-description" rows="3"
+            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+            placeholder="무엇을 했는지 간단히 작성하세요..."></textarea>
+        </div>
+        
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">날짜</label>
+          <input type="date" id="record-date" value="${today}"
+            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+        </div>
+        
+        <div class="flex space-x-4">
+          <button onclick="saveTimeRecord()" 
+            class="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700">
+            <i class="fas fa-save mr-2"></i>저장
+          </button>
+          <button onclick="showTimeRecords()" 
+            class="flex-1 bg-gray-200 text-gray-700 py-2 rounded-lg hover:bg-gray-300">
+            <i class="fas fa-times mr-2"></i>취소
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// 시간 기록 저장
+async function saveTimeRecord() {
+  const record_type = document.getElementById('record-type').value;
+  const duration_minutes = parseInt(document.getElementById('record-duration').value);
+  const description = document.getElementById('record-description').value;
+  const record_date = document.getElementById('record-date').value;
+  
+  if (!duration_minutes || duration_minutes <= 0) {
+    alert('시간을 입력해주세요.');
+    return;
+  }
+  
+  try {
+    await api.post('/time-records', {
+      record_type,
+      duration_minutes,
+      description,
+      record_date
+    });
+    showTimeRecords();
+  } catch (error) {
+    console.error('Save time record error:', error);
+    alert('저장에 실패했습니다.');
+  }
+}
+
+// 시간 기록 삭제
+async function deleteTimeRecord(recordId) {
+  if (!confirm('정말 삭제하시겠습니까?')) return;
+  
+  try {
+    await api.delete(`/time-records/${recordId}`);
+    showTimeRecords();
+  } catch (error) {
+    console.error('Delete time record error:', error);
+  }
+}
+
+// 휴가 신청 화면
+async function showVacations() {
+  currentView = 'vacations';
+  
+  try {
+    const response = await api.get('/vacations');
+    const vacations = response.data;
+    
+    let vacationsHTML = vacations.map(vacation => `
+      <div class="border-b border-gray-200 py-4 last:border-0">
+        <div class="flex justify-between items-start">
+          <div>
+            <p class="text-gray-800 font-semibold">
+              ${vacation.start_date} ~ ${vacation.end_date}
+            </p>
+            <p class="text-sm text-gray-600 mt-1">${vacation.reason || '사유 없음'}</p>
+            <span class="inline-block mt-2 px-3 py-1 rounded-full text-xs font-medium ${
+              vacation.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+              vacation.status === 'approved' ? 'bg-green-100 text-green-800' :
+              'bg-red-100 text-red-800'
+            }">
+              ${
+                vacation.status === 'pending' ? '대기중' :
+                vacation.status === 'approved' ? '승인됨' : '거절됨'
+              }
+            </span>
+          </div>
+          ${vacation.status === 'pending' ? `
+            <button onclick="deleteVacation(${vacation.id})" 
+              class="text-red-600 hover:text-red-800">
+              <i class="fas fa-times"></i>
+            </button>
+          ` : ''}
+        </div>
+      </div>
+    `).join('');
+    
+    if (vacations.length === 0) {
+      vacationsHTML = '<p class="text-center text-gray-500 py-8">신청한 휴가가 없습니다.</p>';
+    }
+    
+    document.getElementById('content-area').innerHTML = `
+      <div class="flex justify-between items-center mb-6">
+        <h2 class="text-xl font-bold text-gray-800">
+          <i class="fas fa-umbrella-beach mr-2"></i>휴가 신청
+        </h2>
+        <button onclick="showVacationForm()" 
+          class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
+          <i class="fas fa-plus mr-2"></i>휴가 신청
+        </button>
+      </div>
+      
+      <div id="vacations-list">
+        ${vacationsHTML}
+      </div>
+    `;
+  } catch (error) {
+    console.error('Vacations error:', error);
+  }
+}
+
+// 휴가 신청 폼
+function showVacationForm() {
+  const today = new Date().toISOString().split('T')[0];
+  
+  document.getElementById('content-area').innerHTML = `
+    <div class="max-w-2xl mx-auto">
+      <h2 class="text-xl font-bold text-gray-800 mb-6">
+        <i class="fas fa-plus mr-2"></i>휴가 신청
+      </h2>
+      
+      <div class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">시작 날짜</label>
+          <input type="date" id="vacation-start" min="${today}"
+            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+        </div>
+        
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">종료 날짜</label>
+          <input type="date" id="vacation-end" min="${today}"
+            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+        </div>
+        
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">사유</label>
+          <textarea id="vacation-reason" rows="3"
+            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+            placeholder="휴가 사유를 입력하세요..."></textarea>
+        </div>
+        
+        <div class="flex space-x-4">
+          <button onclick="saveVacation()" 
+            class="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700">
+            <i class="fas fa-paper-plane mr-2"></i>신청
+          </button>
+          <button onclick="showVacations()" 
+            class="flex-1 bg-gray-200 text-gray-700 py-2 rounded-lg hover:bg-gray-300">
+            <i class="fas fa-times mr-2"></i>취소
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// 휴가 신청 저장
+async function saveVacation() {
+  const start_date = document.getElementById('vacation-start').value;
+  const end_date = document.getElementById('vacation-end').value;
+  const reason = document.getElementById('vacation-reason').value;
+  
+  if (!start_date || !end_date) {
+    alert('날짜를 선택해주세요.');
+    return;
+  }
+  
+  if (new Date(start_date) > new Date(end_date)) {
+    alert('종료 날짜는 시작 날짜 이후여야 합니다.');
+    return;
+  }
+  
+  try {
+    await api.post('/vacations', { start_date, end_date, reason });
+    showVacations();
+  } catch (error) {
+    console.error('Save vacation error:', error);
+    alert('신청에 실패했습니다.');
+  }
+}
+
+// 휴가 신청 취소
+async function deleteVacation(vacationId) {
+  if (!confirm('휴가 신청을 취소하시겠습니까?')) return;
+  
+  try {
+    await api.delete(`/vacations/${vacationId}`);
+    showVacations();
+  } catch (error) {
+    console.error('Delete vacation error:', error);
+  }
+}
+
+// 셀프 평가 화면
+async function showEvaluations() {
+  currentView = 'evaluations';
+  
+  try {
+    const response = await api.get('/evaluations');
+    const evaluations = response.data;
+    
+    let evaluationsHTML = evaluations.map(evaluation => `
+      <div class="border-b border-gray-200 py-4 last:border-0">
+        <div class="flex justify-between items-start">
+          <div class="flex-1">
+            <p class="text-gray-800 font-semibold mb-2">${evaluation.evaluation_date}</p>
+            <div class="grid grid-cols-3 gap-4 mb-2">
+              <div>
+                <p class="text-xs text-gray-600">생산성</p>
+                <p class="text-lg font-bold text-blue-600">${evaluation.productivity_score}/5</p>
+              </div>
+              <div>
+                <p class="text-xs text-gray-600">품질</p>
+                <p class="text-lg font-bold text-green-600">${evaluation.quality_score}/5</p>
+              </div>
+              <div>
+                <p class="text-xs text-gray-600">협업</p>
+                <p class="text-lg font-bold text-purple-600">${evaluation.collaboration_score}/5</p>
+              </div>
+            </div>
+            ${evaluation.notes ? `<p class="text-sm text-gray-600">${evaluation.notes}</p>` : ''}
+          </div>
+        </div>
+      </div>
+    `).join('');
+    
+    if (evaluations.length === 0) {
+      evaluationsHTML = '<p class="text-center text-gray-500 py-8">아직 작성한 평가가 없습니다.</p>';
+    }
+    
+    document.getElementById('content-area').innerHTML = `
+      <div class="flex justify-between items-center mb-6">
+        <h2 class="text-xl font-bold text-gray-800">
+          <i class="fas fa-star mr-2"></i>셀프 평가
+        </h2>
+        <button onclick="showEvaluationForm()" 
+          class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
+          <i class="fas fa-plus mr-2"></i>평가 작성
+        </button>
+      </div>
+      
+      <div id="evaluations-list">
+        ${evaluationsHTML}
+      </div>
+    `;
+  } catch (error) {
+    console.error('Evaluations error:', error);
+  }
+}
+
+// 셀프 평가 폼
+function showEvaluationForm() {
+  const today = new Date().toISOString().split('T')[0];
+  
+  document.getElementById('content-area').innerHTML = `
+    <div class="max-w-2xl mx-auto">
+      <h2 class="text-xl font-bold text-gray-800 mb-6">
+        <i class="fas fa-plus mr-2"></i>셀프 평가 작성
+      </h2>
+      
+      <div class="space-y-6">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">평가 날짜</label>
+          <input type="date" id="evaluation-date" value="${today}"
+            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+        </div>
+        
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">생산성 (1-5)</label>
+          <input type="range" id="productivity-score" min="1" max="5" value="3"
+            class="w-full" oninput="document.getElementById('productivity-value').textContent = this.value">
+          <div class="flex justify-between text-sm text-gray-600">
+            <span>낮음</span>
+            <span class="font-bold" id="productivity-value">3</span>
+            <span>높음</span>
+          </div>
+        </div>
+        
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">품질 (1-5)</label>
+          <input type="range" id="quality-score" min="1" max="5" value="3"
+            class="w-full" oninput="document.getElementById('quality-value').textContent = this.value">
+          <div class="flex justify-between text-sm text-gray-600">
+            <span>낮음</span>
+            <span class="font-bold" id="quality-value">3</span>
+            <span>높음</span>
+          </div>
+        </div>
+        
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">협업 (1-5)</label>
+          <input type="range" id="collaboration-score" min="1" max="5" value="3"
+            class="w-full" oninput="document.getElementById('collaboration-value').textContent = this.value">
+          <div class="flex justify-between text-sm text-gray-600">
+            <span>낮음</span>
+            <span class="font-bold" id="collaboration-value">3</span>
+            <span>높음</span>
+          </div>
+        </div>
+        
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">메모</label>
+          <textarea id="evaluation-notes" rows="4"
+            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+            placeholder="오늘의 업무 내용이나 느낀 점을 작성하세요..."></textarea>
+        </div>
+        
+        <div class="flex space-x-4">
+          <button onclick="saveEvaluation()" 
+            class="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700">
+            <i class="fas fa-save mr-2"></i>저장
+          </button>
+          <button onclick="showEvaluations()" 
+            class="flex-1 bg-gray-200 text-gray-700 py-2 rounded-lg hover:bg-gray-300">
+            <i class="fas fa-times mr-2"></i>취소
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// 셀프 평가 저장
+async function saveEvaluation() {
+  const evaluation_date = document.getElementById('evaluation-date').value;
+  const productivity_score = parseInt(document.getElementById('productivity-score').value);
+  const quality_score = parseInt(document.getElementById('quality-score').value);
+  const collaboration_score = parseInt(document.getElementById('collaboration-score').value);
+  const notes = document.getElementById('evaluation-notes').value;
+  
+  try {
+    await api.post('/evaluations', {
+      evaluation_date,
+      productivity_score,
+      quality_score,
+      collaboration_score,
+      notes
+    });
+    showEvaluations();
+  } catch (error) {
+    console.error('Save evaluation error:', error);
+    alert('저장에 실패했습니다.');
+  }
+}
+
+// 초기 로드
+checkAuth();

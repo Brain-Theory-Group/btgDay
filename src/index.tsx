@@ -1,12 +1,391 @@
 import { Hono } from 'hono'
-import { renderer } from './renderer'
+import { cors } from 'hono/cors'
+import { serveStatic } from 'hono/cloudflare-workers'
 
-const app = new Hono()
+type Bindings = {
+  DB: D1Database;
+}
 
-app.use(renderer)
+const app = new Hono<{ Bindings: Bindings }>()
+
+// CORS 설정
+app.use('/api/*', cors())
+
+// 정적 파일 제공
+app.use('/static/*', serveStatic({ root: './public' }))
+
+// ==================== 인증 API ====================
+
+// 로그인
+app.post('/api/login', async (c) => {
+  const { email, password } = await c.req.json()
+  
+  const user = await c.env.DB.prepare(
+    'SELECT id, email, name, role FROM users WHERE email = ? AND password = ?'
+  ).bind(email, password).first()
+  
+  if (!user) {
+    return c.json({ error: '이메일 또는 비밀번호가 잘못되었습니다.' }, 401)
+  }
+  
+  // 세션 토큰 생성
+  const token = crypto.randomUUID()
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7일
+  
+  await c.env.DB.prepare(
+    'INSERT INTO sessions (user_id, token, expires_at) VALUES (?, ?, ?)'
+  ).bind(user.id, token, expiresAt.toISOString()).run()
+  
+  return c.json({ 
+    token, 
+    user: {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role
+    }
+  })
+})
+
+// 회원가입
+app.post('/api/register', async (c) => {
+  const { email, password, name } = await c.req.json()
+  
+  try {
+    const result = await c.env.DB.prepare(
+      'INSERT INTO users (email, password, name) VALUES (?, ?, ?)'
+    ).bind(email, password, name).run()
+    
+    return c.json({ 
+      success: true, 
+      userId: result.meta.last_row_id 
+    })
+  } catch (error) {
+    return c.json({ error: '이미 존재하는 이메일입니다.' }, 400)
+  }
+})
+
+// 로그아웃
+app.post('/api/logout', async (c) => {
+  const token = c.req.header('Authorization')?.replace('Bearer ', '')
+  
+  if (token) {
+    await c.env.DB.prepare('DELETE FROM sessions WHERE token = ?').bind(token).run()
+  }
+  
+  return c.json({ success: true })
+})
+
+// 인증 미들웨어
+const authMiddleware = async (c: any, next: any) => {
+  const token = c.req.header('Authorization')?.replace('Bearer ', '')
+  
+  if (!token) {
+    return c.json({ error: '인증이 필요합니다.' }, 401)
+  }
+  
+  const session = await c.env.DB.prepare(
+    'SELECT user_id, expires_at FROM sessions WHERE token = ?'
+  ).bind(token).first()
+  
+  if (!session || new Date(session.expires_at as string) < new Date()) {
+    return c.json({ error: '세션이 만료되었습니다.' }, 401)
+  }
+  
+  c.set('userId', session.user_id)
+  await next()
+}
+
+// ==================== 연구노트 API ====================
+
+// 연구노트 목록 조회
+app.get('/api/notes', authMiddleware, async (c) => {
+  const userId = c.get('userId')
+  
+  const notes = await c.env.DB.prepare(
+    `SELECT id, title, content, gdrive_url, created_at, updated_at 
+     FROM research_notes 
+     WHERE user_id = ? 
+     ORDER BY created_at DESC`
+  ).bind(userId).all()
+  
+  return c.json(notes.results)
+})
+
+// 연구노트 단일 조회
+app.get('/api/notes/:id', authMiddleware, async (c) => {
+  const userId = c.get('userId')
+  const noteId = c.req.param('id')
+  
+  const note = await c.env.DB.prepare(
+    'SELECT * FROM research_notes WHERE id = ? AND user_id = ?'
+  ).bind(noteId, userId).first()
+  
+  if (!note) {
+    return c.json({ error: '노트를 찾을 수 없습니다.' }, 404)
+  }
+  
+  return c.json(note)
+})
+
+// 연구노트 작성
+app.post('/api/notes', authMiddleware, async (c) => {
+  const userId = c.get('userId')
+  const { title, content, gdrive_url } = await c.req.json()
+  
+  const result = await c.env.DB.prepare(
+    'INSERT INTO research_notes (user_id, title, content, gdrive_url) VALUES (?, ?, ?, ?)'
+  ).bind(userId, title, content, gdrive_url || null).run()
+  
+  return c.json({ 
+    success: true, 
+    id: result.meta.last_row_id 
+  })
+})
+
+// 연구노트 수정
+app.put('/api/notes/:id', authMiddleware, async (c) => {
+  const userId = c.get('userId')
+  const noteId = c.req.param('id')
+  const { title, content, gdrive_url } = await c.req.json()
+  
+  await c.env.DB.prepare(
+    `UPDATE research_notes 
+     SET title = ?, content = ?, gdrive_url = ?, updated_at = CURRENT_TIMESTAMP 
+     WHERE id = ? AND user_id = ?`
+  ).bind(title, content, gdrive_url || null, noteId, userId).run()
+  
+  return c.json({ success: true })
+})
+
+// 연구노트 삭제
+app.delete('/api/notes/:id', authMiddleware, async (c) => {
+  const userId = c.get('userId')
+  const noteId = c.req.param('id')
+  
+  await c.env.DB.prepare(
+    'DELETE FROM research_notes WHERE id = ? AND user_id = ?'
+  ).bind(noteId, userId).run()
+  
+  return c.json({ success: true })
+})
+
+// ==================== 시간 기록 API ====================
+
+// 시간 기록 조회 (날짜별)
+app.get('/api/time-records', authMiddleware, async (c) => {
+  const userId = c.get('userId')
+  const date = c.req.query('date') || new Date().toISOString().split('T')[0]
+  
+  const records = await c.env.DB.prepare(
+    `SELECT * FROM time_records 
+     WHERE user_id = ? AND record_date = ? 
+     ORDER BY created_at DESC`
+  ).bind(userId, date).all()
+  
+  return c.json(records.results)
+})
+
+// 시간 기록 통계 (주간/월간)
+app.get('/api/time-records/stats', authMiddleware, async (c) => {
+  const userId = c.get('userId')
+  const period = c.req.query('period') || 'week' // week, month
+  
+  let dateFilter = ''
+  if (period === 'week') {
+    dateFilter = "date('now', '-7 days')"
+  } else {
+    dateFilter = "date('now', '-30 days')"
+  }
+  
+  const stats = await c.env.DB.prepare(
+    `SELECT 
+       record_type,
+       SUM(duration_minutes) as total_minutes,
+       COUNT(*) as count
+     FROM time_records 
+     WHERE user_id = ? AND record_date >= ${dateFilter}
+     GROUP BY record_type`
+  ).bind(userId).all()
+  
+  return c.json(stats.results)
+})
+
+// 시간 기록 추가
+app.post('/api/time-records', authMiddleware, async (c) => {
+  const userId = c.get('userId')
+  const { record_type, duration_minutes, description, record_date } = await c.req.json()
+  
+  const result = await c.env.DB.prepare(
+    `INSERT INTO time_records (user_id, record_type, duration_minutes, description, record_date) 
+     VALUES (?, ?, ?, ?, ?)`
+  ).bind(userId, record_type, duration_minutes, description, record_date).run()
+  
+  return c.json({ 
+    success: true, 
+    id: result.meta.last_row_id 
+  })
+})
+
+// 시간 기록 삭제
+app.delete('/api/time-records/:id', authMiddleware, async (c) => {
+  const userId = c.get('userId')
+  const recordId = c.req.param('id')
+  
+  await c.env.DB.prepare(
+    'DELETE FROM time_records WHERE id = ? AND user_id = ?'
+  ).bind(recordId, userId).run()
+  
+  return c.json({ success: true })
+})
+
+// ==================== 휴가 신청 API ====================
+
+// 휴가 신청 목록 조회
+app.get('/api/vacations', authMiddleware, async (c) => {
+  const userId = c.get('userId')
+  
+  const vacations = await c.env.DB.prepare(
+    `SELECT * FROM vacation_requests 
+     WHERE user_id = ? 
+     ORDER BY created_at DESC`
+  ).bind(userId).all()
+  
+  return c.json(vacations.results)
+})
+
+// 휴가 신청
+app.post('/api/vacations', authMiddleware, async (c) => {
+  const userId = c.get('userId')
+  const { start_date, end_date, reason } = await c.req.json()
+  
+  const result = await c.env.DB.prepare(
+    `INSERT INTO vacation_requests (user_id, start_date, end_date, reason) 
+     VALUES (?, ?, ?, ?)`
+  ).bind(userId, start_date, end_date, reason).run()
+  
+  return c.json({ 
+    success: true, 
+    id: result.meta.last_row_id 
+  })
+})
+
+// 휴가 신청 취소
+app.delete('/api/vacations/:id', authMiddleware, async (c) => {
+  const userId = c.get('userId')
+  const vacationId = c.req.param('id')
+  
+  await c.env.DB.prepare(
+    'DELETE FROM vacation_requests WHERE id = ? AND user_id = ? AND status = "pending"'
+  ).bind(vacationId, userId).run()
+  
+  return c.json({ success: true })
+})
+
+// ==================== 셀프 평가 API ====================
+
+// 셀프 평가 목록 조회
+app.get('/api/evaluations', authMiddleware, async (c) => {
+  const userId = c.get('userId')
+  
+  const evaluations = await c.env.DB.prepare(
+    `SELECT * FROM self_evaluations 
+     WHERE user_id = ? 
+     ORDER BY evaluation_date DESC 
+     LIMIT 30`
+  ).bind(userId).all()
+  
+  return c.json(evaluations.results)
+})
+
+// 셀프 평가 추가
+app.post('/api/evaluations', authMiddleware, async (c) => {
+  const userId = c.get('userId')
+  const { evaluation_date, productivity_score, quality_score, collaboration_score, notes } = await c.req.json()
+  
+  const result = await c.env.DB.prepare(
+    `INSERT INTO self_evaluations 
+     (user_id, evaluation_date, productivity_score, quality_score, collaboration_score, notes) 
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).bind(userId, evaluation_date, productivity_score, quality_score, collaboration_score, notes).run()
+  
+  return c.json({ 
+    success: true, 
+    id: result.meta.last_row_id 
+  })
+})
+
+// ==================== 대시보드 API ====================
+
+// 대시보드 통계
+app.get('/api/dashboard', authMiddleware, async (c) => {
+  const userId = c.get('userId')
+  
+  // 오늘 날짜
+  const today = new Date().toISOString().split('T')[0]
+  
+  // 연구노트 수
+  const notesCount = await c.env.DB.prepare(
+    'SELECT COUNT(*) as count FROM research_notes WHERE user_id = ?'
+  ).bind(userId).first()
+  
+  // 오늘 시간 기록
+  const todayTime = await c.env.DB.prepare(
+    `SELECT record_type, SUM(duration_minutes) as total 
+     FROM time_records 
+     WHERE user_id = ? AND record_date = ?
+     GROUP BY record_type`
+  ).bind(userId, today).all()
+  
+  // 대기중인 휴가 신청
+  const pendingVacations = await c.env.DB.prepare(
+    'SELECT COUNT(*) as count FROM vacation_requests WHERE user_id = ? AND status = "pending"'
+  ).bind(userId).first()
+  
+  // 최근 평가 평균
+  const avgEvaluation = await c.env.DB.prepare(
+    `SELECT 
+       AVG(productivity_score) as avg_productivity,
+       AVG(quality_score) as avg_quality,
+       AVG(collaboration_score) as avg_collaboration
+     FROM (
+       SELECT * FROM self_evaluations 
+       WHERE user_id = ? 
+       ORDER BY evaluation_date DESC 
+       LIMIT 7
+     )`
+  ).bind(userId).first()
+  
+  return c.json({
+    notes_count: notesCount?.count || 0,
+    today_time: todayTime.results,
+    pending_vacations: pendingVacations?.count || 0,
+    avg_evaluation: avgEvaluation
+  })
+})
+
+// ==================== 홈페이지 ====================
 
 app.get('/', (c) => {
-  return c.render(<h1>Hello!</h1>)
+  return c.html(`
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>연구노트 관리 시스템</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
+    <link href="/static/styles.css" rel="stylesheet">
+</head>
+<body class="bg-gray-50">
+    <div id="app"></div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/axios@1.6.0/dist/axios.min.js"></script>
+    <script src="/static/app.js"></script>
+</body>
+</html>
+  `)
 })
 
 export default app
