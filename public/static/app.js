@@ -277,6 +277,10 @@ async function showDashboard() {
                   class="px-6 py-4 text-sm font-medium text-gray-600 hover:text-blue-600 hover:border-blue-600 border-b-2 border-transparent">
                   <i class="fas fa-star mr-2"></i>셀프 평가
                 </button>
+                <button onclick="showCalendar()" 
+                  class="px-6 py-4 text-sm font-medium text-gray-600 hover:text-blue-600 hover:border-blue-600 border-b-2 border-transparent">
+                  <i class="fas fa-calendar-alt mr-2"></i>캘린더
+                </button>
               </nav>
             </div>
           </div>
@@ -899,6 +903,410 @@ async function saveEvaluation() {
     showEvaluations();
   } catch (error) {
     console.error('Save evaluation error:', error);
+    alert('저장에 실패했습니다.');
+  }
+}
+
+// ==================== 캘린더 ====================
+
+// 캘린더 화면
+async function showCalendar() {
+  currentView = 'calendar';
+  
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = today.getMonth() + 1;
+  
+  await renderCalendar(year, month);
+}
+
+// 캘린더 렌더링
+async function renderCalendar(year, month) {
+  try {
+    const response = await api.get(`/calendar?year=${year}&month=${month.toString().padStart(2, '0')}`);
+    const events = response.data;
+    
+    // 해당 월의 첫날과 마지막 날
+    const firstDay = new Date(year, month - 1, 1);
+    const lastDay = new Date(year, month, 0);
+    const daysInMonth = lastDay.getDate();
+    const startDayOfWeek = firstDay.getDay(); // 0: 일요일
+    
+    // 이전/다음 달 계산
+    const prevMonth = month === 1 ? 12 : month - 1;
+    const prevYear = month === 1 ? year - 1 : year;
+    const nextMonth = month === 12 ? 1 : month + 1;
+    const nextYear = month === 12 ? year + 1 : year;
+    
+    // 날짜별 이벤트 매핑
+    const eventsByDate = {};
+    
+    // 시간 기록
+    events.time_records.forEach(record => {
+      if (!eventsByDate[record.date]) eventsByDate[record.date] = [];
+      eventsByDate[record.date].push({
+        type: 'time',
+        subtype: record.subtype,
+        title: `${record.subtype === 'research' ? '연구' : '공부'} ${record.duration_minutes}분`,
+        color: record.subtype === 'research' ? 'bg-green-100 text-green-800' : 'bg-purple-100 text-purple-800',
+        icon: record.subtype === 'research' ? 'fa-flask' : 'fa-graduation-cap'
+      });
+    });
+    
+    // 휴가
+    events.vacations.forEach(vacation => {
+      const start = new Date(vacation.date);
+      const end = new Date(vacation.end_date);
+      
+      // 휴가 기간의 모든 날짜에 표시
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        const dateStr = d.toISOString().split('T')[0];
+        if (!eventsByDate[dateStr]) eventsByDate[dateStr] = [];
+        eventsByDate[dateStr].push({
+          type: 'vacation',
+          title: '휴가',
+          color: 'bg-orange-100 text-orange-800',
+          icon: 'fa-umbrella-beach'
+        });
+      }
+    });
+    
+    // 세미나
+    events.seminars.forEach(seminar => {
+      if (!eventsByDate[seminar.date]) eventsByDate[seminar.date] = [];
+      eventsByDate[seminar.date].push({
+        type: 'seminar',
+        title: seminar.title,
+        time: seminar.start_time,
+        color: 'bg-blue-100 text-blue-800',
+        icon: 'fa-users',
+        data: seminar
+      });
+    });
+    
+    // 출장
+    events.business_trips.forEach(trip => {
+      const start = new Date(trip.date);
+      const end = new Date(trip.end_date);
+      
+      // 출장 기간의 모든 날짜에 표시
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        const dateStr = d.toISOString().split('T')[0];
+        if (!eventsByDate[dateStr]) eventsByDate[dateStr] = [];
+        eventsByDate[dateStr].push({
+          type: 'business_trip',
+          title: `출장: ${trip.title}`,
+          color: 'bg-red-100 text-red-800',
+          icon: 'fa-plane'
+        });
+      }
+    });
+    
+    // 달력 그리드 생성
+    let calendarHTML = '';
+    let dayCounter = 1;
+    const totalCells = Math.ceil((startDayOfWeek + daysInMonth) / 7) * 7;
+    
+    for (let i = 0; i < totalCells; i++) {
+      if (i % 7 === 0) {
+        calendarHTML += '<div class="grid grid-cols-7 gap-2">';
+      }
+      
+      if (i < startDayOfWeek || dayCounter > daysInMonth) {
+        calendarHTML += '<div class="min-h-32 bg-gray-50 rounded-lg p-2"></div>';
+      } else {
+        const dateStr = `${year}-${month.toString().padStart(2, '0')}-${dayCounter.toString().padStart(2, '0')}`;
+        const dayEvents = eventsByDate[dateStr] || [];
+        const isToday = dateStr === new Date().toISOString().split('T')[0];
+        
+        calendarHTML += `
+          <div class="min-h-32 bg-white rounded-lg p-2 border ${isToday ? 'border-blue-500 border-2' : 'border-gray-200'}">
+            <div class="text-sm font-semibold ${isToday ? 'text-blue-600' : 'text-gray-700'} mb-2">
+              ${dayCounter}
+            </div>
+            <div class="space-y-1">
+              ${dayEvents.slice(0, 3).map(event => `
+                <div class="text-xs px-2 py-1 rounded ${event.color} truncate">
+                  <i class="fas ${event.icon} mr-1"></i>
+                  ${event.time ? event.time + ' ' : ''}${event.title}
+                </div>
+              `).join('')}
+              ${dayEvents.length > 3 ? `<div class="text-xs text-gray-500 px-2">+${dayEvents.length - 3} more</div>` : ''}
+            </div>
+          </div>
+        `;
+        dayCounter++;
+      }
+      
+      if ((i + 1) % 7 === 0) {
+        calendarHTML += '</div>';
+      }
+    }
+    
+    document.getElementById('content-area').innerHTML = `
+      <div>
+        <!-- 캘린더 헤더 -->
+        <div class="flex justify-between items-center mb-6">
+          <div class="flex items-center space-x-4">
+            <button onclick="renderCalendar(${prevYear}, ${prevMonth})" 
+              class="px-3 py-2 bg-gray-200 rounded-lg hover:bg-gray-300">
+              <i class="fas fa-chevron-left"></i>
+            </button>
+            <h2 class="text-2xl font-bold text-gray-800">
+              ${year}년 ${month}월
+            </h2>
+            <button onclick="renderCalendar(${nextYear}, ${nextMonth})" 
+              class="px-3 py-2 bg-gray-200 rounded-lg hover:bg-gray-300">
+              <i class="fas fa-chevron-right"></i>
+            </button>
+          </div>
+          <div class="flex space-x-2">
+            <button onclick="showSeminarForm()" 
+              class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+              <i class="fas fa-plus mr-2"></i>세미나 추가
+            </button>
+            <button onclick="showBusinessTripForm()" 
+              class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700">
+              <i class="fas fa-plus mr-2"></i>출장 추가
+            </button>
+          </div>
+        </div>
+        
+        <!-- 요일 헤더 -->
+        <div class="grid grid-cols-7 gap-2 mb-2">
+          <div class="text-center font-semibold text-red-600">일</div>
+          <div class="text-center font-semibold text-gray-700">월</div>
+          <div class="text-center font-semibold text-gray-700">화</div>
+          <div class="text-center font-semibold text-gray-700">수</div>
+          <div class="text-center font-semibold text-gray-700">목</div>
+          <div class="text-center font-semibold text-gray-700">금</div>
+          <div class="text-center font-semibold text-blue-600">토</div>
+        </div>
+        
+        <!-- 캘린더 그리드 -->
+        <div class="space-y-2">
+          ${calendarHTML}
+        </div>
+        
+        <!-- 범례 -->
+        <div class="mt-6 flex flex-wrap gap-4">
+          <div class="flex items-center">
+            <div class="w-4 h-4 bg-green-100 rounded mr-2"></div>
+            <span class="text-sm text-gray-600">연구</span>
+          </div>
+          <div class="flex items-center">
+            <div class="w-4 h-4 bg-purple-100 rounded mr-2"></div>
+            <span class="text-sm text-gray-600">공부</span>
+          </div>
+          <div class="flex items-center">
+            <div class="w-4 h-4 bg-orange-100 rounded mr-2"></div>
+            <span class="text-sm text-gray-600">휴가</span>
+          </div>
+          <div class="flex items-center">
+            <div class="w-4 h-4 bg-blue-100 rounded mr-2"></div>
+            <span class="text-sm text-gray-600">세미나</span>
+          </div>
+          <div class="flex items-center">
+            <div class="w-4 h-4 bg-red-100 rounded mr-2"></div>
+            <span class="text-sm text-gray-600">출장</span>
+          </div>
+        </div>
+      </div>
+    `;
+  } catch (error) {
+    console.error('Calendar error:', error);
+  }
+}
+
+// 세미나 추가 폼
+function showSeminarForm(seminarId = null) {
+  const today = new Date().toISOString().split('T')[0];
+  
+  document.getElementById('content-area').innerHTML = `
+    <div class="max-w-2xl mx-auto">
+      <h2 class="text-xl font-bold text-gray-800 mb-6">
+        <i class="fas fa-plus mr-2"></i>세미나 추가
+      </h2>
+      
+      <div class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">제목</label>
+          <input type="text" id="seminar-title" 
+            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+            placeholder="세미나 제목">
+        </div>
+        
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">설명</label>
+          <textarea id="seminar-description" rows="3"
+            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+            placeholder="세미나 설명"></textarea>
+        </div>
+        
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">날짜</label>
+          <input type="date" id="seminar-date" value="${today}"
+            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+        </div>
+        
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">시작 시간</label>
+            <input type="time" id="seminar-start-time" value="14:00"
+              class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">종료 시간</label>
+            <input type="time" id="seminar-end-time" value="16:00"
+              class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+          </div>
+        </div>
+        
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">장소</label>
+          <input type="text" id="seminar-location" 
+            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+            placeholder="세미나실">
+        </div>
+        
+        <div class="flex space-x-4">
+          <button onclick="saveSeminar()" 
+            class="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700">
+            <i class="fas fa-save mr-2"></i>저장
+          </button>
+          <button onclick="showCalendar()" 
+            class="flex-1 bg-gray-200 text-gray-700 py-2 rounded-lg hover:bg-gray-300">
+            <i class="fas fa-times mr-2"></i>취소
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// 세미나 저장
+async function saveSeminar() {
+  const title = document.getElementById('seminar-title').value;
+  const description = document.getElementById('seminar-description').value;
+  const event_date = document.getElementById('seminar-date').value;
+  const start_time = document.getElementById('seminar-start-time').value;
+  const end_time = document.getElementById('seminar-end-time').value;
+  const location = document.getElementById('seminar-location').value;
+  
+  if (!title || !event_date) {
+    alert('제목과 날짜를 입력해주세요.');
+    return;
+  }
+  
+  try {
+    await api.post('/seminars', {
+      title,
+      description,
+      event_date,
+      start_time,
+      end_time,
+      location
+    });
+    showCalendar();
+  } catch (error) {
+    console.error('Save seminar error:', error);
+    alert('저장에 실패했습니다.');
+  }
+}
+
+// 출장 추가 폼
+function showBusinessTripForm(tripId = null) {
+  const today = new Date().toISOString().split('T')[0];
+  
+  document.getElementById('content-area').innerHTML = `
+    <div class="max-w-2xl mx-auto">
+      <h2 class="text-xl font-bold text-gray-800 mb-6">
+        <i class="fas fa-plus mr-2"></i>출장 추가
+      </h2>
+      
+      <div class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">목적지</label>
+          <input type="text" id="trip-destination" 
+            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+            placeholder="서울, 부산 등">
+        </div>
+        
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">목적</label>
+          <textarea id="trip-purpose" rows="3"
+            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+            placeholder="출장 목적"></textarea>
+        </div>
+        
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">시작 날짜</label>
+            <input type="date" id="trip-start-date" min="${today}"
+              class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">종료 날짜</label>
+            <input type="date" id="trip-end-date" min="${today}"
+              class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+          </div>
+        </div>
+        
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">상태</label>
+          <select id="trip-status" 
+            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+            <option value="planned">예정</option>
+            <option value="ongoing">진행중</option>
+            <option value="completed">완료</option>
+            <option value="cancelled">취소</option>
+          </select>
+        </div>
+        
+        <div class="flex space-x-4">
+          <button onclick="saveBusinessTrip()" 
+            class="flex-1 bg-red-600 text-white py-2 rounded-lg hover:bg-red-700">
+            <i class="fas fa-save mr-2"></i>저장
+          </button>
+          <button onclick="showCalendar()" 
+            class="flex-1 bg-gray-200 text-gray-700 py-2 rounded-lg hover:bg-gray-300">
+            <i class="fas fa-times mr-2"></i>취소
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// 출장 저장
+async function saveBusinessTrip() {
+  const destination = document.getElementById('trip-destination').value;
+  const purpose = document.getElementById('trip-purpose').value;
+  const start_date = document.getElementById('trip-start-date').value;
+  const end_date = document.getElementById('trip-end-date').value;
+  const status = document.getElementById('trip-status').value;
+  
+  if (!destination || !start_date || !end_date) {
+    alert('필수 항목을 입력해주세요.');
+    return;
+  }
+  
+  if (new Date(start_date) > new Date(end_date)) {
+    alert('종료 날짜는 시작 날짜 이후여야 합니다.');
+    return;
+  }
+  
+  try {
+    await api.post('/business-trips', {
+      destination,
+      purpose,
+      start_date,
+      end_date,
+      status
+    });
+    showCalendar();
+  } catch (error) {
+    console.error('Save business trip error:', error);
     alert('저장에 실패했습니다.');
   }
 }

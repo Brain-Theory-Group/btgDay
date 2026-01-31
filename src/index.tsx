@@ -315,6 +315,173 @@ app.post('/api/evaluations', authMiddleware, async (c) => {
   })
 })
 
+// ==================== 세미나 API ====================
+
+// 세미나 목록 조회
+app.get('/api/seminars', authMiddleware, async (c) => {
+  const userId = c.get('userId')
+  
+  const seminars = await c.env.DB.prepare(
+    `SELECT * FROM seminars 
+     WHERE user_id = ? 
+     ORDER BY event_date DESC, start_time DESC`
+  ).bind(userId).all()
+  
+  return c.json(seminars.results)
+})
+
+// 세미나 추가
+app.post('/api/seminars', authMiddleware, async (c) => {
+  const userId = c.get('userId')
+  const { title, description, event_date, start_time, end_time, location } = await c.req.json()
+  
+  const result = await c.env.DB.prepare(
+    `INSERT INTO seminars (user_id, title, description, event_date, start_time, end_time, location) 
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).bind(userId, title, description, event_date, start_time, end_time, location).run()
+  
+  return c.json({ 
+    success: true, 
+    id: result.meta.last_row_id 
+  })
+})
+
+// 세미나 수정
+app.put('/api/seminars/:id', authMiddleware, async (c) => {
+  const userId = c.get('userId')
+  const seminarId = c.req.param('id')
+  const { title, description, event_date, start_time, end_time, location } = await c.req.json()
+  
+  await c.env.DB.prepare(
+    `UPDATE seminars 
+     SET title = ?, description = ?, event_date = ?, start_time = ?, end_time = ?, location = ?
+     WHERE id = ? AND user_id = ?`
+  ).bind(title, description, event_date, start_time, end_time, location, seminarId, userId).run()
+  
+  return c.json({ success: true })
+})
+
+// 세미나 삭제
+app.delete('/api/seminars/:id', authMiddleware, async (c) => {
+  const userId = c.get('userId')
+  const seminarId = c.req.param('id')
+  
+  await c.env.DB.prepare(
+    'DELETE FROM seminars WHERE id = ? AND user_id = ?'
+  ).bind(seminarId, userId).run()
+  
+  return c.json({ success: true })
+})
+
+// ==================== 출장 API ====================
+
+// 출장 목록 조회
+app.get('/api/business-trips', authMiddleware, async (c) => {
+  const userId = c.get('userId')
+  
+  const trips = await c.env.DB.prepare(
+    `SELECT * FROM business_trips 
+     WHERE user_id = ? 
+     ORDER BY start_date DESC`
+  ).bind(userId).all()
+  
+  return c.json(trips.results)
+})
+
+// 출장 추가
+app.post('/api/business-trips', authMiddleware, async (c) => {
+  const userId = c.get('userId')
+  const { destination, purpose, start_date, end_date, status } = await c.req.json()
+  
+  const result = await c.env.DB.prepare(
+    `INSERT INTO business_trips (user_id, destination, purpose, start_date, end_date, status) 
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).bind(userId, destination, purpose, start_date, end_date, status || 'planned').run()
+  
+  return c.json({ 
+    success: true, 
+    id: result.meta.last_row_id 
+  })
+})
+
+// 출장 수정
+app.put('/api/business-trips/:id', authMiddleware, async (c) => {
+  const userId = c.get('userId')
+  const tripId = c.req.param('id')
+  const { destination, purpose, start_date, end_date, status } = await c.req.json()
+  
+  await c.env.DB.prepare(
+    `UPDATE business_trips 
+     SET destination = ?, purpose = ?, start_date = ?, end_date = ?, status = ?
+     WHERE id = ? AND user_id = ?`
+  ).bind(destination, purpose, start_date, end_date, status, tripId, userId).run()
+  
+  return c.json({ success: true })
+})
+
+// 출장 삭제
+app.delete('/api/business-trips/:id', authMiddleware, async (c) => {
+  const userId = c.get('userId')
+  const tripId = c.req.param('id')
+  
+  await c.env.DB.prepare(
+    'DELETE FROM business_trips WHERE id = ? AND user_id = ?'
+  ).bind(tripId, userId).run()
+  
+  return c.json({ success: true })
+})
+
+// ==================== 캘린더 API ====================
+
+// 월별 캘린더 이벤트 조회
+app.get('/api/calendar', authMiddleware, async (c) => {
+  const userId = c.get('userId')
+  const year = c.req.query('year') || new Date().getFullYear().toString()
+  const month = c.req.query('month') || (new Date().getMonth() + 1).toString().padStart(2, '0')
+  
+  const startDate = `${year}-${month}-01`
+  const endDate = `${year}-${month}-31`
+  
+  // 시간 기록 (연구/공부)
+  const timeRecords = await c.env.DB.prepare(
+    `SELECT 'time_record' as type, record_type as subtype, record_date as date, 
+            duration_minutes, description as title
+     FROM time_records 
+     WHERE user_id = ? AND record_date >= ? AND record_date <= ?`
+  ).bind(userId, startDate, endDate).all()
+  
+  // 휴가
+  const vacations = await c.env.DB.prepare(
+    `SELECT 'vacation' as type, status as subtype, start_date as date, end_date,
+            reason as title
+     FROM vacation_requests 
+     WHERE user_id = ? AND start_date <= ? AND end_date >= ?`
+  ).bind(userId, endDate, startDate).all()
+  
+  // 세미나
+  const seminars = await c.env.DB.prepare(
+    `SELECT 'seminar' as type, 'seminar' as subtype, event_date as date,
+            title, start_time, end_time, location, description
+     FROM seminars 
+     WHERE user_id = ? AND event_date >= ? AND event_date <= ?`
+  ).bind(userId, startDate, endDate).all()
+  
+  // 출장
+  const trips = await c.env.DB.prepare(
+    `SELECT 'business_trip' as type, status as subtype, start_date as date, end_date,
+            destination as title, purpose as description
+     FROM business_trips 
+     WHERE user_id = ? AND start_date <= ? AND end_date >= ?`
+  ).bind(userId, endDate, startDate).all()
+  
+  return c.json({
+    time_records: timeRecords.results,
+    vacations: vacations.results,
+    seminars: seminars.results,
+    business_trips: trips.results
+  })
+})
+
 // ==================== 대시보드 API ====================
 
 // 대시보드 통계
