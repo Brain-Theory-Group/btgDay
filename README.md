@@ -1,7 +1,7 @@
 # 연구노트 관리 시스템
 
 ## 프로젝트 개요
-연구원들을 위한 종합 연구노트 관리 시스템입니다. 연구 활동 기록, 시간 관리, 휴가 신청, 셀프 평가 기능을 제공합니다.
+연구원들을 위한 종합 연구노트 관리 시스템입니다. 연구 활동 기록, 시간 관리, 휴가 신청, 셀프 평가, 일정 관리 기능을 제공합니다.
 
 ## 주요 기능
 
@@ -34,7 +34,27 @@
    - 메모 기능
    - 평가 이력 조회
 
-6. **대시보드**
+6. **캘린더 (NEW!)**
+   - 월간 캘린더 뷰
+   - 모든 일정 통합 표시
+   - 연구/공부 시간 표시
+   - 휴가 일정 표시
+   - 세미나 일정 관리
+   - 출장 일정 관리
+   - 이전/다음 달 이동
+   - 색상별 이벤트 구분
+
+7. **세미나 관리**
+   - 세미나 추가, 수정, 삭제
+   - 날짜, 시간, 장소 기록
+   - 설명 및 상세 정보
+
+8. **출장 관리**
+   - 출장 추가, 수정, 삭제
+   - 목적지, 목적, 기간 기록
+   - 상태 관리 (예정/진행중/완료/취소)
+
+9. **대시보드**
    - 연구노트 개수
    - 오늘의 연구/공부 시간
    - 대기중인 휴가 신청
@@ -68,6 +88,21 @@
 ### 셀프 평가
 - `GET /api/evaluations` - 평가 목록 조회 (최근 30개)
 - `POST /api/evaluations` - 평가 작성 (evaluation_date, productivity_score, quality_score, collaboration_score, notes)
+
+### 세미나
+- `GET /api/seminars` - 세미나 목록 조회
+- `POST /api/seminars` - 세미나 추가 (title, description, event_date, start_time, end_time, location)
+- `PUT /api/seminars/:id` - 세미나 수정
+- `DELETE /api/seminars/:id` - 세미나 삭제
+
+### 출장
+- `GET /api/business-trips` - 출장 목록 조회
+- `POST /api/business-trips` - 출장 추가 (destination, purpose, start_date, end_date, status)
+- `PUT /api/business-trips/:id` - 출장 수정
+- `DELETE /api/business-trips/:id` - 출장 삭제
+
+### 캘린더
+- `GET /api/calendar?year=YYYY&month=MM` - 월별 통합 캘린더 데이터 조회
 
 ### 대시보드
 - `GET /api/dashboard` - 대시보드 통계
@@ -106,6 +141,8 @@
 - **time_records**: 시간 기록 (id, user_id, record_type, duration_minutes, description, record_date)
 - **vacation_requests**: 휴가 신청 (id, user_id, start_date, end_date, reason, status)
 - **self_evaluations**: 셀프 평가 (id, user_id, evaluation_date, scores, notes)
+- **seminars**: 세미나 일정 (id, user_id, title, description, event_date, start_time, end_time, location)
+- **business_trips**: 출장 일정 (id, user_id, destination, purpose, start_date, end_date, status)
 - **sessions**: 세션 관리 (id, user_id, token, expires_at)
 
 ### 스토리지 서비스
@@ -143,6 +180,27 @@
 2. "평가 작성" 버튼 클릭
 3. 생산성, 품질, 협업 점수 선택 (1-5점)
 4. 메모 작성
+5. "저장" 버튼 클릭
+
+### 캘린더
+1. "캘린더" 탭 클릭
+2. 월간 캘린더에서 모든 일정 확인
+3. 이전/다음 달 버튼으로 이동
+4. "세미나 추가" 버튼으로 세미나 일정 등록
+5. "출장 추가" 버튼으로 출장 일정 등록
+
+### 세미나 추가
+1. 캘린더 탭에서 "세미나 추가" 클릭
+2. 제목, 설명 입력
+3. 날짜, 시작/종료 시간 선택
+4. 장소 입력
+5. "저장" 버튼 클릭
+
+### 출장 추가
+1. 캘린더 탭에서 "출장 추가" 클릭
+2. 목적지, 목적 입력
+3. 시작일, 종료일 선택
+4. 상태 선택 (예정/진행중/완료/취소)
 5. "저장" 버튼 클릭
 
 ## 배포
@@ -195,7 +253,8 @@ webapp/
 │       ├── app.js             # 프론트엔드 JavaScript
 │       └── styles.css         # 커스텀 CSS
 ├── migrations/
-│   └── 0001_initial_schema.sql # 데이터베이스 스키마
+│   ├── 0001_initial_schema.sql      # 초기 데이터베이스 스키마
+│   └── 0002_add_calendar_events.sql # 캘린더 이벤트 추가
 ├── seed.sql                   # 테스트 데이터
 ├── ecosystem.config.cjs       # PM2 설정
 ├── wrangler.jsonc            # Cloudflare 설정
@@ -203,12 +262,14 @@ webapp/
 ```
 
 ## 다음 개발 단계 (선택 사항)
-1. **관리자 기능**: 휴가 신청 승인/거절 기능
-2. **고급 통계**: 그래프 및 차트 추가
-3. **알림 시스템**: 이메일 또는 푸시 알림
-4. **파일 업로드**: Google Drive API 직접 연동
-5. **검색 기능**: 연구노트 전문 검색
-6. **엑스포트**: PDF 내보내기 기능
+1. **캘린더 상세 기능**: 일정 클릭 시 상세 정보 모달, 수정/삭제 기능
+2. **관리자 기능**: 휴가 신청 승인/거절 기능
+3. **고급 통계**: 그래프 및 차트 추가
+4. **알림 시스템**: 이메일 또는 푸시 알림
+5. **파일 업로드**: Google Drive API 직접 연동
+6. **검색 기능**: 연구노트 전문 검색
+7. **엑스포트**: PDF 내보내기 기능
+8. **주간/일간 뷰**: 캘린더에 다양한 뷰 옵션 추가
 
 ## 라이선스
 MIT
