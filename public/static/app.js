@@ -28,15 +28,27 @@ document.addEventListener('DOMContentLoaded', function() {
 // 인증 확인
 function checkAuth() {
   const token = localStorage.getItem('token');
-  const user = localStorage.getItem('user');
-  
-  if (token && user) {
-    currentToken = token;
-    currentUser = JSON.parse(user);
-    showDashboard();
-  } else {
-    showLogin();
+  const userString = localStorage.getItem('user');
+
+  if (token && userString) {
+    try {
+      const parsedUser = JSON.parse(userString);
+
+      if (parsedUser && typeof parsedUser === 'object') {
+        currentToken = token;
+        currentUser = parsedUser;
+        showDashboard();
+        return;
+      }
+    } catch (error) {
+      console.warn('저장된 사용자 정보가 손상되었습니다. 초기화합니다.', error);
+    }
+
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
   }
+
+  showLogin();
 }
 
 // 로그인 화면
@@ -417,21 +429,6 @@ async function showNotes(searchQuery = '', tagFilter = '') {
 function searchNotes() {
   const searchQuery = document.getElementById('note-search').value;
   showNotes(searchQuery, '');
-}
-        </h2>
-        <button onclick="showNoteForm()" 
-          class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
-          <i class="fas fa-plus mr-2"></i>새 노트 작성
-        </button>
-      </div>
-      
-      <div id="notes-list">
-        ${notesHTML}
-      </div>
-    `;
-  } catch (error) {
-    console.error('Notes error:', error);
-  }
 }
 
 // 노트 작성 폼
