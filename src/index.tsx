@@ -101,13 +101,29 @@ const authMiddleware = async (c: any, next: any) => {
 // 연구노트 목록 조회
 app.get('/api/notes', authMiddleware, async (c) => {
   const userId = c.get('userId')
+  const search = c.req.query('search') || ''
+  const tag = c.req.query('tag') || ''
   
-  const notes = await c.env.DB.prepare(
-    `SELECT id, title, content, gdrive_url, created_at, updated_at 
-     FROM research_notes 
-     WHERE user_id = ? 
-     ORDER BY created_at DESC`
-  ).bind(userId).all()
+  let query = `SELECT id, title, content, gdrive_url, tags, created_at, updated_at 
+               FROM research_notes 
+               WHERE user_id = ?`
+  const params = [userId]
+  
+  // 검색어가 있으면 제목이나 내용에서 검색
+  if (search) {
+    query += ` AND (title LIKE ? OR content LIKE ?)`
+    params.push(`%${search}%`, `%${search}%`)
+  }
+  
+  // 태그 필터가 있으면 태그에서 검색
+  if (tag) {
+    query += ` AND tags LIKE ?`
+    params.push(`%${tag}%`)
+  }
+  
+  query += ` ORDER BY created_at DESC`
+  
+  const notes = await c.env.DB.prepare(query).bind(...params).all()
   
   return c.json(notes.results)
 })
@@ -131,11 +147,11 @@ app.get('/api/notes/:id', authMiddleware, async (c) => {
 // 연구노트 작성
 app.post('/api/notes', authMiddleware, async (c) => {
   const userId = c.get('userId')
-  const { title, content, gdrive_url } = await c.req.json()
+  const { title, content, gdrive_url, tags } = await c.req.json()
   
   const result = await c.env.DB.prepare(
-    'INSERT INTO research_notes (user_id, title, content, gdrive_url) VALUES (?, ?, ?, ?)'
-  ).bind(userId, title, content, gdrive_url || null).run()
+    'INSERT INTO research_notes (user_id, title, content, gdrive_url, tags) VALUES (?, ?, ?, ?, ?)'
+  ).bind(userId, title, content, gdrive_url || null, tags || null).run()
   
   return c.json({ 
     success: true, 
@@ -147,13 +163,13 @@ app.post('/api/notes', authMiddleware, async (c) => {
 app.put('/api/notes/:id', authMiddleware, async (c) => {
   const userId = c.get('userId')
   const noteId = c.req.param('id')
-  const { title, content, gdrive_url } = await c.req.json()
+  const { title, content, gdrive_url, tags } = await c.req.json()
   
   await c.env.DB.prepare(
     `UPDATE research_notes 
-     SET title = ?, content = ?, gdrive_url = ?, updated_at = CURRENT_TIMESTAMP 
+     SET title = ?, content = ?, gdrive_url = ?, tags = ?, updated_at = CURRENT_TIMESTAMP 
      WHERE id = ? AND user_id = ?`
-  ).bind(title, content, gdrive_url || null, noteId, userId).run()
+  ).bind(title, content, gdrive_url || null, tags || null, noteId, userId).run()
   
   return c.json({ success: true })
 })
@@ -475,11 +491,22 @@ app.get('/api/calendar', authMiddleware, async (c) => {
      WHERE user_id = ? AND start_date <= ? AND end_date >= ?`
   ).bind(userId, endDate, startDate).all()
   
+  // 연구노트 (작성일 기준)
+  const notes = await c.env.DB.prepare(
+    `SELECT 'research_note' as type, 'note' as subtype, 
+            DATE(created_at) as date, title, tags
+     FROM research_notes 
+     WHERE user_id = ? 
+       AND DATE(created_at) >= ? 
+       AND DATE(created_at) <= ?`
+  ).bind(userId, startDate, endDate).all()
+  
   return c.json({
     time_records: timeRecords.results,
     vacations: vacations.results,
     seminars: seminars.results,
-    business_trips: trips.results
+    business_trips: trips.results,
+    research_notes: notes.results
   })
 })
 

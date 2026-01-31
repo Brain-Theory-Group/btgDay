@@ -4,11 +4,11 @@ INSERT OR IGNORE INTO users (email, name, password, role) VALUES
   ('researcher2@example.com', '이과학', 'password123', 'researcher'),
   ('admin@example.com', '박지도교수', 'password123', 'admin');
 
--- 샘플 연구노트
-INSERT OR IGNORE INTO research_notes (user_id, title, content) VALUES 
-  (1, '실험 1 - 초기 데이터 수집', '오늘 첫 번째 실험을 진행했습니다. 데이터 수집이 원활하게 진행되었습니다.'),
-  (1, '실험 2 - 분석 결과', '데이터 분석 결과 예상과 일치하는 패턴을 발견했습니다.'),
-  (2, '문헌 조사', '관련 논문 5편을 읽고 정리했습니다.');
+-- 샘플 연구노트 (태그 포함)
+INSERT OR IGNORE INTO research_notes (user_id, title, content, tags) VALUES 
+  (1, '실험 1 - 초기 데이터 수집', '오늘 첫 번째 실험을 진행했습니다. 데이터 수집이 원활하게 진행되었습니다.', '실험,데이터수집,초기실험'),
+  (1, '실험 2 - 분석 결과', '데이터 분석 결과 예상과 일치하는 패턴을 발견했습니다.', '실험,데이터분석,패턴'),
+  (2, '문헌 조사', '관련 논문 5편을 읽고 정리했습니다.', '문헌조사,논문,리뷰');
 
 -- 샘플 시간 기록
 INSERT OR IGNORE INTO time_records (user_id, record_type, duration_minutes, description, record_date) VALUES 

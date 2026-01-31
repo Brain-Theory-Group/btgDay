@@ -312,46 +312,103 @@ async function showDashboard() {
 }
 
 // 연구노트 화면
-async function showNotes() {
+async function showNotes(searchQuery = '', tagFilter = '') {
   currentView = 'notes';
   
   try {
-    const response = await api.get('/notes');
+    let url = '/notes';
+    const params = [];
+    if (searchQuery) params.push(`search=${encodeURIComponent(searchQuery)}`);
+    if (tagFilter) params.push(`tag=${encodeURIComponent(tagFilter)}`);
+    if (params.length > 0) url += '?' + params.join('&');
+    
+    const response = await api.get(url);
     const notes = response.data;
     
-    let notesHTML = notes.map(note => `
-      <div class="border-b border-gray-200 py-4 last:border-0">
-        <div class="flex justify-between items-start">
-          <div class="flex-1">
-            <h3 class="font-semibold text-gray-800 mb-1">${note.title}</h3>
-            <p class="text-sm text-gray-600 mb-2 line-clamp-2">${note.content}</p>
-            ${note.gdrive_url ? `<a href="${note.gdrive_url}" target="_blank" class="text-xs text-blue-600 hover:underline">
-              <i class="fab fa-google-drive mr-1"></i>Google Drive에서 보기
-            </a>` : ''}
-            <p class="text-xs text-gray-400 mt-1">${new Date(note.created_at).toLocaleString('ko-KR')}</p>
-          </div>
-          <div class="flex space-x-2 ml-4">
-            <button onclick="editNote(${note.id})" 
-              class="text-blue-600 hover:text-blue-800">
-              <i class="fas fa-edit"></i>
-            </button>
-            <button onclick="deleteNote(${note.id})" 
-              class="text-red-600 hover:text-red-800">
-              <i class="fas fa-trash"></i>
-            </button>
+    let notesHTML = notes.map(note => {
+      const tags = note.tags ? note.tags.split(',').map(tag => 
+        `<span class="inline-block px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded mr-1 cursor-pointer hover:bg-blue-200" 
+               onclick="showNotes('', '${tag.trim()}')">#${tag.trim()}</span>`
+      ).join('') : '';
+      
+      return `
+        <div class="border-b border-gray-200 py-4 last:border-0">
+          <div class="flex justify-between items-start">
+            <div class="flex-1">
+              <h3 class="font-semibold text-gray-800 mb-1">${note.title}</h3>
+              <p class="text-sm text-gray-600 mb-2 line-clamp-2">${note.content}</p>
+              ${tags ? `<div class="mb-2">${tags}</div>` : ''}
+              ${note.gdrive_url ? `<a href="${note.gdrive_url}" target="_blank" class="text-xs text-blue-600 hover:underline">
+                <i class="fab fa-google-drive mr-1"></i>Google Drive에서 보기
+              </a>` : ''}
+              <p class="text-xs text-gray-400 mt-1">${new Date(note.created_at).toLocaleString('ko-KR')}</p>
+            </div>
+            <div class="flex space-x-2 ml-4">
+              <button onclick="editNote(${note.id})" 
+                class="text-blue-600 hover:text-blue-800">
+                <i class="fas fa-edit"></i>
+              </button>
+              <button onclick="deleteNote(${note.id})" 
+                class="text-red-600 hover:text-red-800">
+                <i class="fas fa-trash"></i>
+              </button>
+            </div>
           </div>
         </div>
-      </div>
-    `).join('');
+      `;
+    }).join('');
     
     if (notes.length === 0) {
-      notesHTML = '<p class="text-center text-gray-500 py-8">아직 작성한 연구노트가 없습니다.</p>';
+      notesHTML = '<p class="text-center text-gray-500 py-8">검색 결과가 없습니다.</p>';
     }
     
     document.getElementById('content-area').innerHTML = `
       <div class="flex justify-between items-center mb-6">
         <h2 class="text-xl font-bold text-gray-800">
           <i class="fas fa-book mr-2"></i>연구노트
+        </h2>
+        <button onclick="showNoteForm()" 
+          class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
+          <i class="fas fa-plus mr-2"></i>새 노트 작성
+        </button>
+      </div>
+      
+      <!-- 검색 바 -->
+      <div class="mb-4 flex space-x-2">
+        <input type="text" id="note-search" value="${searchQuery}" 
+          placeholder="제목이나 내용으로 검색..." 
+          class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+          onkeypress="if(event.key==='Enter') searchNotes()">
+        <button onclick="searchNotes()" 
+          class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+          <i class="fas fa-search mr-2"></i>검색
+        </button>
+        ${searchQuery || tagFilter ? `
+          <button onclick="showNotes()" 
+            class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300">
+            <i class="fas fa-times mr-2"></i>초기화
+          </button>
+        ` : ''}
+      </div>
+      
+      ${tagFilter ? `<div class="mb-4 text-sm text-gray-600">
+        <i class="fas fa-filter mr-1"></i>태그 필터: <strong>#${tagFilter}</strong>
+      </div>` : ''}
+      
+      <div id="notes-list">
+        ${notesHTML}
+      </div>
+    `;
+  } catch (error) {
+    console.error('Notes error:', error);
+  }
+}
+
+// 노트 검색
+function searchNotes() {
+  const searchQuery = document.getElementById('note-search').value;
+  showNotes(searchQuery, '');
+}
         </h2>
         <button onclick="showNoteForm()" 
           class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
@@ -402,6 +459,17 @@ function showNoteForm(noteId = null) {
           </p>
         </div>
         
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">태그 (선택)</label>
+          <input type="text" id="note-tags" 
+            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+            placeholder="실험,데이터분석,머신러닝">
+          <p class="text-xs text-gray-500 mt-1">
+            <i class="fas fa-tag mr-1"></i>
+            쉼표(,)로 구분하여 여러 태그를 입력하세요
+          </p>
+        </div>
+        
         <div class="flex space-x-4">
           <button onclick="saveNote(${noteId})" 
             class="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700">
@@ -430,6 +498,7 @@ async function loadNoteData(noteId) {
     document.getElementById('note-title').value = note.title;
     document.getElementById('note-content').value = note.content;
     document.getElementById('note-gdrive').value = note.gdrive_url || '';
+    document.getElementById('note-tags').value = note.tags || '';
   } catch (error) {
     console.error('Load note error:', error);
   }
@@ -440,6 +509,7 @@ async function saveNote(noteId) {
   const title = document.getElementById('note-title').value;
   const content = document.getElementById('note-content').value;
   const gdrive_url = document.getElementById('note-gdrive').value;
+  const tags = document.getElementById('note-tags').value;
   
   if (!title || !content) {
     alert('제목과 내용을 입력해주세요.');
@@ -448,9 +518,9 @@ async function saveNote(noteId) {
   
   try {
     if (noteId) {
-      await api.put(`/notes/${noteId}`, { title, content, gdrive_url });
+      await api.put(`/notes/${noteId}`, { title, content, gdrive_url, tags });
     } else {
-      await api.post('/notes', { title, content, gdrive_url });
+      await api.post('/notes', { title, content, gdrive_url, tags });
     }
     showNotes();
   } catch (error) {
@@ -1012,6 +1082,17 @@ async function renderCalendar(year, month) {
       }
     });
     
+    // 연구노트
+    events.research_notes.forEach(note => {
+      if (!eventsByDate[note.date]) eventsByDate[note.date] = [];
+      eventsByDate[note.date].push({
+        type: 'research_note',
+        title: `📝 ${note.title}`,
+        color: 'bg-teal-100 text-teal-800',
+        icon: 'fa-book'
+      });
+    });
+    
     // 달력 그리드 생성
     let calendarHTML = '';
     let dayCounter = 1;
@@ -1119,6 +1200,10 @@ async function renderCalendar(year, month) {
           <div class="flex items-center">
             <div class="w-4 h-4 bg-red-100 rounded mr-2"></div>
             <span class="text-sm text-gray-600">출장</span>
+          </div>
+          <div class="flex items-center">
+            <div class="w-4 h-4 bg-teal-100 rounded mr-2"></div>
+            <span class="text-sm text-gray-600">연구노트</span>
           </div>
         </div>
       </div>
