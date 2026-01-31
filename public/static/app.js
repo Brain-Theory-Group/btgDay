@@ -2,18 +2,27 @@
 let currentUser = null;
 let currentToken = null;
 let currentView = 'dashboard';
+let api;
 
-// API 헬퍼
-const api = axios.create({
-  baseURL: '/api'
-});
+// DOMContentLoaded 이벤트를 기다림
+document.addEventListener('DOMContentLoaded', function() {
+  console.log('앱 초기화 시작...');
+  
+  // API 헬퍼 초기화
+  api = axios.create({
+    baseURL: '/api'
+  });
 
-// 토큰을 헤더에 자동 추가
-api.interceptors.request.use(config => {
-  if (currentToken) {
-    config.headers.Authorization = `Bearer ${currentToken}`;
-  }
-  return config;
+  // 토큰을 헤더에 자동 추가
+  api.interceptors.request.use(config => {
+    if (currentToken) {
+      config.headers.Authorization = `Bearer ${currentToken}`;
+    }
+    return config;
+  });
+
+  // 인증 확인 및 앱 시작
+  checkAuth();
 });
 
 // 인증 확인
@@ -1719,5 +1728,4 @@ async function saveComment(userId) {
   }
 }
 
-// 초기 로드
-checkAuth();
+// 초기 로드는 DOMContentLoaded에서 처리됨

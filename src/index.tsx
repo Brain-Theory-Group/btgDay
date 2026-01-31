@@ -1,6 +1,5 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
-import { serveStatic } from 'hono/cloudflare-workers'
 
 type Bindings = {
   DB: D1Database;
@@ -11,8 +10,7 @@ const app = new Hono<{ Bindings: Bindings }>()
 // CORS 설정
 app.use('/api/*', cors())
 
-// 정적 파일 제공
-app.use('/static/*', serveStatic({ root: './public' }))
+// 정적 파일은 Cloudflare Pages가 직접 서빙하도록 함 (serveStatic 제거)
 
 // ==================== 인증 API ====================
 
